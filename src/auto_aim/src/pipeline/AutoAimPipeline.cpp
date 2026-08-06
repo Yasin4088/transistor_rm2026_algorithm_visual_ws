@@ -510,7 +510,7 @@ void AutoAimPipeline::Stage4::drawResults(cv::Mat& image, const AutoAimPipelineD
     }
 }
 
-// ==================== Pipeline scheduler and public API ====================
+// ==================== 流水线调度与公共API ====================
 
 AutoAimPipeline::AutoAimPipeline(std::shared_ptr<YAML::Node> config_file_ptr,
                                  rclcpp::Node* node,

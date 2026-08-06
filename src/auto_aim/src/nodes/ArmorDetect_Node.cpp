@@ -1,48 +1,36 @@
 // ArmorDetect_Node.cpp
-#include <rclcpp/rclcpp.hpp>
-#include <opencv2/opencv.hpp>
-#include "camera/Camera.h"
-#include "2d_armor_detector/LightBarDetector.h"
-#include "2d_armor_detector/ArmorDetector.h"
-#include "2d_armor_detector/ArmorClassifier.h"
-#include "3d_processing/ArmorSolver.h"
-//#include "armor_detector/ArmorAngleKalman.h"
+#define _USE_MATH_DEFINES // 启用数学常量
 
-//#include "auto_aim/msg/serial_data.hpp"
-//#include "auto_aim/msg/gimbal_command.hpp"
+#include <cmath>
 #include <chrono>
+#include <csignal>
+#include <filesystem>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <limits.h>
+#include <memory>
+#include <queue>
+#include <sstream>
 #include <string>
 #include <thread>
-#include <3d_processing/BallisticSolver.h>
-#include <yaml-cpp/yaml.h>
-#include "utils/FrameRateCounter.h"
-#include "2d_armor_detector/UnwarpUtils.h"
-#include "other_input/VideoInput.h"
-#include "other_input/ImagesInput.h"
-#include <iostream>
-#include <sstream>
-#include <filesystem>
 #include <unistd.h>
-#include <limits.h>
-#include <queue>
+
+#include <opencv2/opencv.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <yaml-cpp/yaml.h>
+
+#include "2d_armor_detector/Params.h"
+#include "camera/Camera.h"
 #include "communication/Com.h"
-#include <csignal>
-#include "3d_processing/RestFrame.h"
-#define _USE_MATH_DEFINES // 启用数学常量
-#include <cmath>
-#include "predictor/PredictorMain.h"
-// #include "2d_armor_detector/YOLOPoseArmorDetector.h"
-#include "predictor/PredictorSwitcher.h"
-#include "2d_armor_detector/Armor.h"
-#include "communication/WatchdogClient.h"
-#include "visualizer/RestFrameDraw.h"
 #include "communication/HeadIMU.h"
-#include "visualizer/YawVisualizer.h"
+#include "communication/WatchdogClient.h"
+#include "macro/AutoAimMacro.h"
+#include "other_input/ImagesInput.h"
+#include "other_input/VideoInput.h"
 #include "pipeline/AutoAimPipeline.h"
 
 namespace fs = std::filesystem;
-
-#include "macro/AutoAimMacro.h"
 
 // 全局变量定义
 cv::Mat g_image;
@@ -55,7 +43,8 @@ public:
     ArmorDetectNode() : Node("armor_detect_node") {
         node_start_time = std::chrono::steady_clock::now();
 
-        // 1. 获取可执行文件路径    
+        // 路径与配置
+        // 获取可执行文件路径
         char exec_path[PATH_MAX];
         ssize_t len = readlink("/proc/self/exe", exec_path, sizeof(exec_path) - 1);
         if (len == -1) {
@@ -64,47 +53,59 @@ public:
         }
         exec_path[len] = '\0';
         RCLCPP_INFO(this->get_logger(), "info from C++ | Path: %s\n", exec_path);
-        // 2. 转换为文件系统路径对象
+
         fs::path full_path(exec_path);
-        std::string full_path_str = full_path.string();  // 转换为字符串便于查找
-        // 3. 查找工作空间目录名
+        std::string full_path_str = full_path.string(); //转换为字符串，便于查找
+
+        // 获取工作空间路径
         const std::string ws_dir_name = "transistor_rm2026_algorithm_visual_ws";
         size_t pos = full_path_str.find(ws_dir_name);
         if (pos == std::string::npos) {
             std::cerr << "Error: Workspace directory not found in path" << std::endl;
             return;
         }
-        // 4. 截取到工作空间目录结尾
         fs::path ws_dir_path = full_path_str.substr(0, pos + ws_dir_name.length());
-        // 5. 拼接模型路径
-        const std::string config_file_relatvie_path = "src/shared_files/config.yaml";
-        fs::path config_file_path = ws_dir_path / config_file_relatvie_path;  // 使用文件系统的路径拼接
 
-        // 加载配置文件
+        // 获取配置文件路径并加载
+        const std::string config_file_relative_path = "src/shared_files/config.yaml";
+        fs::path config_file_path = ws_dir_path / config_file_relative_path;
+
         config_file_ptr = std::make_shared<YAML::Node>(YAML::LoadFile(config_file_path));
 
-
-
-        // 初始化参数
-        
+        // 参数初始化
+        // 初始化敌方颜色
 #ifdef FIX_ENEMY_COLOR
         enemy_color_ = (FIX_ENEMY_COLOR == 0) ? "RED" : "BLUE";
 #else
         enemy_color_ = (*config_file_ptr)["init_enemy_color"].as<std::string>();
 #endif
+
+        // 初始化子弹速度
 #ifdef FIX_BULLET_VELOCITY
         bullet_velocity_ = FIX_BULLET_VELOCITY;
 #else
         bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
 #endif
 
-        // 根据相机内参自动提取，不再需要手动输入
-        // yaw_rad_to_x_pixel_ratio = (*config_file_ptr)["yaw_rad_to_x_pixel_ratio"].as<float>(); 
-        // pitch_rad_to_y_pixel_ratio = (*config_file_ptr)["pitch_rad_to_y_pixel_ratio"].as<float>(); 
+        // 输入源初始化
+#ifdef USE_VIDEO
+        video_input_ = std::make_shared<VideoInput>(ws_dir_path / (*config_file_ptr)["video_relative_path"].as<std::string>());
+#else
+#ifdef USE_IMAGES
+        images_input_ = std::make_shared<ImagesInput>(ws_dir_path / (*config_file_ptr)["images_relative_path"].as<std::string>());
+#else
+        camera_ = std::make_shared<Camera>((*config_file_ptr)["cam_ip"].as<std::string>(), (*config_file_ptr)["pc_ip"].as<std::string>());
+        camera_->setExposureTime((*config_file_ptr)["camera_ExposureTime"].as<float>());
+        camera_->setGain((*config_file_ptr)["camera_Gain"].as<float>());
+        camera_->start();
+#endif
+#endif
+
+        // 自瞄参数初始化
+        // 根据相机内参自动提取
         const YAML::Node& camera_matrix_Node = (*config_file_ptr)["camera_matrix"];
         yaw_rad_to_x_pixel_ratio = camera_matrix_Node[0][0].as<float>(); 
         pitch_rad_to_y_pixel_ratio = camera_matrix_Node[1][1].as<float>(); 
-
 
         params_.min_light_height = (*config_file_ptr)["min_light_height"].as<int>();
         params_.light_min_area = (*config_file_ptr)["light_min_area"].as<int>();
@@ -114,22 +115,6 @@ public:
         params_.light_max_tilt_angle = (*config_file_ptr)["light_max_tilt_angle"].as<float>();
         
         frame_rate_ = (*config_file_ptr)["frame_rate"].as<float>();
-
-
-#ifdef USE_VIDEO
-        video_input_ = std::make_shared<VideoInput>(ws_dir_path / (*config_file_ptr)["video_relative_path"].as<std::string>());
-#else
-#ifdef USE_IMAGES
-        images_input_ = std::make_shared<ImagesInput>(ws_dir_path / (*config_file_ptr)["images_relative_path"].as<std::string>());
-#else
-        // 初始化相机和检测器
-        camera_ = std::make_shared<Camera>((*config_file_ptr)["cam_ip"].as<std::string>(), (*config_file_ptr)["pc_ip"].as<std::string>());
-        //camera_ = std::make_shared<Camera>(0);
-        camera_->setExposureTime((*config_file_ptr)["camera_ExposureTime"].as<float>());
-        camera_->setGain((*config_file_ptr)["camera_Gain"].as<float>());
-        camera_ -> start();
-#endif
-#endif
         serial_delay_time = (*config_file_ptr)["serial_delay_time"].as<float>();
 
         if (enemy_color_ == "RED") {
@@ -141,19 +126,20 @@ public:
         } else if (enemy_color_ == "BOTH") {
             params_.enemy_color = Params::BOTH;
         } else {
-            // 处理错误情况，设置默认值
             enemy_color_ = "GREEN";
-            params_.enemy_color = Params::GREEN;
+            params_.enemy_color = Params::GREEN; // 处理错误情况，设置默认值
         }
 
         com_data_visualize_frame = cv::Mat::zeros(480, 640, CV_8UC3);
 
+        // 算法流水线初始化
         auto_aim_pipeline_ = std::make_shared<AutoAimPipeline>(
             config_file_ptr,
             this,
             ws_dir_path,
             node_start_time);
 
+        // 串口与后台任务初始化
         DelayInfos init_serial_infos;
         init_serial_infos.last_pitch_rad_ = 0.0;
         init_serial_infos.last_yaw_rad_ = 0.0;
@@ -162,11 +148,10 @@ public:
         init_serial_infos.push_time = node_start_time;
         serial_infos_delay_.push(init_serial_infos);
 
-        // 初始化串口通信器
+        // 串口通信器初始化
         serial_communication_ = std::make_shared<SerialCommunicationClass>(this, std::bind(&ArmorDetectNode::serialDataCallback, this, std::placeholders::_1));
 
         com_timer_thread_ = std::thread(std::bind(&SerialCommunicationClass::timerThread, serial_communication_));
-        // com_timer_thread_.detach();
 
         headIMUInfos.headIMU_communication_ = std::make_shared<HeadIMUSerialCommunicationClass>(std::bind(&ArmorDetectNode::headIMUSerialDataCallback, this, std::placeholders::_1));
         headIMUInfos.headIMU_timer_thread_ = std::thread(std::bind(&HeadIMUSerialCommunicationClass::timerThread, headIMUInfos.headIMU_communication_));
@@ -175,20 +160,16 @@ public:
         serial_communication_->sendData(0, 0, false);
 
         watchdog_client = std::make_shared<WatchdogClient>();
-        watchdog_client -> init();
-        watchdog_client -> feed();
+        watchdog_client->init();
+        watchdog_client->feed();
         last_feed_dog_time = std::chrono::steady_clock::now();
 
 #ifdef DEBUG_CODE
         debug_code();
 #endif
 
-        // // 创建定时器
-        // timer_ = this->create_wall_timer(
-        //     std::chrono::milliseconds((int)(1000/frame_rate_)), // 33
-        //     std::bind(&ArmorDetectNode::processImage, this));
+        // 主线程创建
         main_loop_thread_ = std::thread(std::bind(&ArmorDetectNode::main_loop_func, this));
-
 
         RCLCPP_INFO(this->get_logger(), "ArmorDetectNode initialized");
     }
@@ -201,6 +182,98 @@ public:
     }
 
 private:
+
+    // 成员变量定义
+    // 配置与线程
+    std::shared_ptr<YAML::Node> config_file_ptr; 
+    std::thread com_timer_thread_;
+    std::thread main_loop_thread_;
+
+    // 输入源
+    std::shared_ptr<Camera> camera_;
+    std::shared_ptr<VideoInput> video_input_;
+    std::shared_ptr<ImagesInput> images_input_;
+    float frame_rate_;
+
+    // 时间与基础参数
+    std::chrono::time_point<std::chrono::steady_clock> node_start_time;
+    float bullet_velocity_;
+
+    // MCU 姿态状态
+    float last_pitch_rad_mcu_;
+    float last_yaw_rad_mcu_;
+    float total_yaw_rad_mcu_;
+    int current_yaw_circle_mcu_ = 0;
+
+    // Head IMU 姿态状态
+    float last_pitch_rad_imu_;
+    float last_yaw_rad_imu_;
+    float total_yaw_rad_imu_;
+    float last_roll_rad_imu_;
+    int current_yaw_circle_imu_ = 0;
+
+    // 延迟对齐后的本帧输入状态
+    float last_pitch_rad_delayed_ = 0;
+    float last_yaw_rad_delayed_ = 0;
+    float total_yaw_rad_delayed_ = 0;
+    float last_roll_rad_delayed_ = 0;
+
+    struct DelayInfos {
+        float last_pitch_rad_;
+        float last_yaw_rad_;
+        float last_roll_rad_;
+        float total_yaw_rad_;
+        std::chrono::steady_clock::time_point push_time;
+    };
+    std::queue<DelayInfos> serial_infos_delay_;
+    float serial_delay_time;
+    std::string enemy_color_;
+    Params params_;
+
+#ifdef SAVE_IMG_FREQ
+    long long frame_count_ = 0;
+#endif
+
+    cv::Point2f ground_stable_point;
+    float yaw_rad_to_x_pixel_ratio;
+    float pitch_rad_to_y_pixel_ratio;
+
+    // 外设、可视化与流水线
+    std::shared_ptr<SerialCommunicationClass> serial_communication_;
+    std::shared_ptr<WatchdogClient> watchdog_client;
+    std::chrono::steady_clock::time_point last_feed_dog_time;
+    cv::Mat com_data_visualize_frame;
+    bool com_data_visualize_frame_used = true;
+    std::shared_ptr<AutoAimPipeline> auto_aim_pipeline_;
+
+    // Head IMU 通信状态
+    struct {
+        std::shared_ptr<HeadIMUSerialCommunicationClass> headIMU_communication_;
+        std::thread headIMU_timer_thread_;
+
+        bool use_head_imu = true;
+
+        float head_imu_yaw;
+        float head_imu_pitch;
+        float head_imu_roll;
+
+        float mcu_yaw;
+        float mcu_pitch;
+        
+        float last_mcu_yaw;
+        float latest_head_imu_yaw_when_mcu_yaw_update;
+        std::chrono::steady_clock::time_point last_mcu_yaw_update_time;
+        bool mcu_yaw_online = true;
+        float last_mcu_command_yaw;
+        float latest_mcu_command_yaw_when_mcu_yaw_update;
+
+        float to_mcu_delta_yaw;
+        float to_mcu_delta_pitch;
+
+        bool last_auto_aim_switch = true; // 用于在开启自瞄时进行校准
+    } headIMUInfos;
+    
+    // 主循环
     void main_loop_func() {
         while (true) {
             std::chrono::steady_clock::time_point loop_start_time = std::chrono::steady_clock::now();
@@ -209,30 +282,8 @@ private:
         }
     }
 
+    // 调试与校准
     void debug_code() {
-        // while (true) {
-        //     static double debug_time_count = 0.0;
-        //     double debug_freq = 0.3;
-        //     double debug_yaw = std::cos(debug_time_count*M_PI*debug_freq) * M_PI / 6;
-        //     double debug_pitch = std::sin(debug_time_count*M_PI*debug_freq) * M_PI / 6;
-        //     serial_communication_->sendData(debug_pitch, debug_yaw);
-        //     RCLCPP_INFO(this->get_logger(), "send debug data: yaw[%.2f] pitch[%.2f]", debug_yaw, debug_pitch);
-        //     RCLCPP_INFO(this->get_logger(), "received data: yaw[%.2f] pitch[%.2f]", last_yaw_rad_delayed_, last_pitch_rad_delayed_);
-        //     cv::Mat frame;
-        //     pthread_mutex_lock(&g_mutex);
-        //     if (!g_image.empty()) {
-        //         frame = g_image.clone();
-        //         image_used = true;
-        //     }
-        //     pthread_mutex_unlock(&g_mutex);
-        //     if (!frame.empty()) {
-        //         cv::imshow("debug_code", frame);
-        //         cv::waitKey(1);
-        //     }
-        //     auto start = std::chrono::steady_clock::now();
-        //     std::this_thread::sleep_until(start + std::chrono::microseconds(33000));
-        //     debug_time_count += 0.033;
-        // }
         std::thread([&]() {
             double debug_time_count = 0.0;
             while (true) {
@@ -242,11 +293,7 @@ private:
                 fakeSerialData.bullet_velocity = 25.0;  // 子弹速度
                 fakeSerialData.bullet_angle = std::sin(debug_time_count * 0.5 * (2*M_PI)) * 1.8 / 30 * 15;    // 子弹角度
                 fakeSerialData.gimbal_yaw =  
-                    // static_cast<int16_t>(60.0 * 4095.0 / 180.0);
-                    // static_cast<int16_t>(std::atan2(std::sin(debug_time_count * 2 * M_PI), std::cos(debug_time_count * 2 * M_PI)) * 4095.0 / M_PI / 12); 
-                    // static_cast<int16_t>(static_cast<float>((std::atan2(std::sin(debug_time_count * 1.0), std::cos(debug_time_count * 1.0)) > 0) - 0.5) * 4095); 
                     static_cast<int16_t>(std::atan2(std::sin(debug_time_count * 0.3), std::cos(debug_time_count * 0.3)) * 4095.0 / M_PI);
-                    // static_cast<int16_t>(std::cos(debug_time_count * 0.5 * (2*M_PI)) * 4095 / 180 * 15);       // 云台当前偏航角
                 fakeSerialData.color = 1;            // 敌方颜色(0:红色, 1:蓝色)
 
                 serialDataCallback(fakeSerialData);
@@ -257,6 +304,7 @@ private:
         }).detach();
     }
 
+    // Head IMU 校准
     void recalibrateHeadIMU() {
         float start_yaw = last_yaw_rad_imu_ + headIMUInfos.to_mcu_delta_yaw;
         float start_pitch = last_pitch_rad_delayed_;
@@ -266,7 +314,7 @@ private:
         }
 
         for (int i = 0; i < 20; i++) {
-            serial_communication_ -> sendData(0.0, start_yaw, false);
+            serial_communication_->sendData(0.0, start_yaw, false);
             usleep(30*1000);
         }
 
@@ -276,11 +324,11 @@ private:
 
         headIMUInfos.to_mcu_delta_yaw = -delta_yaw;
 
-        serial_communication_ -> sendData(start_pitch, start_yaw + headIMUInfos.to_mcu_delta_yaw, false);
+        serial_communication_->sendData(start_pitch, start_yaw + headIMUInfos.to_mcu_delta_yaw, false);
     }
 
+    // 串口与 IMU 回调
     void headIMUSerialDataCallback(const HeadIMUSerialData& msg) {
-
 
         float current_pitch_;
         float current_yaw_;
@@ -288,7 +336,6 @@ private:
         float last_pitch_rad_;
         float last_yaw_rad_;
         float total_yaw_rad_;
-
 
         current_pitch_ = msg.euler_pitch;
         current_yaw_ = msg.euler_yaw;
@@ -330,6 +377,7 @@ private:
         }
     }
 
+    // 串口数据回调
     void serialDataCallback(const SerialData& msg) {
         if (com_data_visualize_frame_used) {
             const MCUDataFrame& odf = msg.origin_data_frame;
@@ -367,7 +415,6 @@ private:
             com_data_visualize_frame_used = false;
         }
 
-
         SerialData processed_msg = msg;
 #ifdef FIX_ENEMY_COLOR
         processed_msg.color = FIX_ENEMY_COLOR;
@@ -376,15 +423,12 @@ private:
         processed_msg.bullet_velocity = FIX_BULLET_VELOCITY;
 #endif
 
-
         float current_pitch_;
         float current_yaw_;
-
 
         bullet_velocity_ = processed_msg.bullet_velocity;
         current_pitch_ = ((float)(processed_msg.bullet_angle)) * 30 / 1.8 * M_PI / 180; // 测定pitch轴传入数据1.8大约对应30°
         current_yaw_ = ((float)(processed_msg.gimbal_yaw)) * M_PI / 4096.0;  // 一圈对应[-4096, 4095]
-
 
         headIMUInfos.mcu_yaw = current_yaw_;
         headIMUInfos.mcu_pitch = current_pitch_;
@@ -397,7 +441,6 @@ private:
             headIMUInfos.to_mcu_delta_yaw = headIMUInfos.mcu_yaw - headIMUInfos.latest_head_imu_yaw_when_mcu_yaw_update;
         }
         headIMUInfos.to_mcu_delta_pitch = headIMUInfos.mcu_pitch - headIMUInfos.head_imu_pitch;
-
 
         while (current_yaw_ < -M_PI) {
             current_yaw_ += 2 * M_PI;
@@ -426,7 +469,6 @@ private:
             bullet_velocity_, current_pitch_, current_yaw_, enemy_color_.c_str(),
             current_yaw_circle_mcu_, total_yaw_rad_mcu_);
 
-
         if (!headIMUInfos.use_head_imu) {
             std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
             DelayInfos now_serial_infos;
@@ -439,6 +481,7 @@ private:
         }
     }
 
+    // 图像投喂与结果处理
     void processImage() {
         auto now = std::chrono::steady_clock::now();
 
@@ -574,94 +617,6 @@ private:
             result.always_valid_data.queue_inter2,
             result.always_valid_data.queue_output);
     }
-
-    // 参数文件
-    std::shared_ptr<YAML::Node> config_file_ptr; 
-
-    // 成员变量
-    // rclcpp::TimerBase::SharedPtr timer_;
-    std::thread com_timer_thread_;
-    std::thread main_loop_thread_;
-    
-    std::shared_ptr<Camera> camera_;
-
-    std::shared_ptr<VideoInput> video_input_;
-    std::shared_ptr<ImagesInput> images_input_;
-    float frame_rate_;
-
-    std::chrono::time_point<std::chrono::steady_clock> node_start_time;
-    
-    float bullet_velocity_;
-
-
-    float last_pitch_rad_mcu_;
-    float last_yaw_rad_mcu_;
-    float total_yaw_rad_mcu_;
-    int current_yaw_circle_mcu_ = 0;
-    
-    float last_pitch_rad_imu_;
-    float last_yaw_rad_imu_;
-    float total_yaw_rad_imu_;
-    float last_roll_rad_imu_;
-    int current_yaw_circle_imu_ = 0;
-
-    float last_pitch_rad_delayed_ = 0;
-    float last_yaw_rad_delayed_ = 0;
-    float total_yaw_rad_delayed_ = 0;
-    float last_roll_rad_delayed_ = 0;
-    struct DelayInfos {
-        float last_pitch_rad_;
-        float last_yaw_rad_;
-        float last_roll_rad_;
-        float total_yaw_rad_;
-        std::chrono::steady_clock::time_point push_time;
-    };
-    std::queue<DelayInfos> serial_infos_delay_;
-    float serial_delay_time;
-    std::string enemy_color_;
-    Params params_;
-
-#ifdef SAVE_IMG_FREQ
-    long long frame_count_ = 0;
-#endif
-    cv::Point2f ground_stable_point;
-    std::shared_ptr<SerialCommunicationClass> serial_communication_;
-    float yaw_rad_to_x_pixel_ratio;
-    float pitch_rad_to_y_pixel_ratio;
-
-    std::shared_ptr<WatchdogClient> watchdog_client;
-    std::chrono::steady_clock::time_point last_feed_dog_time;
-
-    struct {
-        std::shared_ptr<HeadIMUSerialCommunicationClass> headIMU_communication_;
-        std::thread headIMU_timer_thread_;
-
-        bool use_head_imu = true;
-
-        float head_imu_yaw;
-        float head_imu_pitch;
-        float head_imu_roll;
-
-        float mcu_yaw;
-        float mcu_pitch;
-        
-        float last_mcu_yaw;
-        float latest_head_imu_yaw_when_mcu_yaw_update;
-        std::chrono::steady_clock::time_point last_mcu_yaw_update_time;
-        bool mcu_yaw_online = true;
-        float last_mcu_command_yaw;
-        float latest_mcu_command_yaw_when_mcu_yaw_update;
-
-        float to_mcu_delta_yaw;
-        float to_mcu_delta_pitch;
-
-        bool last_auto_aim_switch = true; // 用于在开启自瞄时进行校准
-    } headIMUInfos;
-
-    cv::Mat com_data_visualize_frame;
-    bool com_data_visualize_frame_used = true;
-
-    std::shared_ptr<AutoAimPipeline> auto_aim_pipeline_;
 };
 
 std::shared_ptr<ArmorDetectNode> node;
@@ -670,6 +625,7 @@ void signalHandler(int signum) {
         rclcpp::shutdown();
     }
 }
+
 int main(int argc, char * argv[]) {
     rclcpp::init(argc, argv);
     node = std::make_shared<ArmorDetectNode>();

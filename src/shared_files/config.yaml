@@ -2,7 +2,7 @@
 CLASSIFIER_SHM_KEY : 0x0250
 classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/model.xml"
 
-use_RP24_YOLO : true
+use_RP24_YOLO : false
 RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
 RP24_YOLO_device : "GPU"
 
