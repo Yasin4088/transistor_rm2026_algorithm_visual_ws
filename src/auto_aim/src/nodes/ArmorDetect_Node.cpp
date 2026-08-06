@@ -38,8 +38,7 @@
 #include "visualizer/RestFrameDraw.h"
 #include "communication/HeadIMU.h"
 #include "visualizer/YawVisualizer.h"
-#include "logger/TwoVideoLogger.h"
-#include "RP24_YOLO/RP24_YOLO_Wrapper.h"
+#include "pipeline/AutoAimPipeline.h"
 
 namespace fs = std::filesystem;
 
@@ -99,8 +98,6 @@ public:
         bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
 #endif
 
-        use_RP24_YOLO = (*config_file_ptr)["use_RP24_YOLO"].as<bool>();
-
         // 根据相机内参自动提取，不再需要手动输入
         // yaw_rad_to_x_pixel_ratio = (*config_file_ptr)["yaw_rad_to_x_pixel_ratio"].as<float>(); 
         // pitch_rad_to_y_pixel_ratio = (*config_file_ptr)["pitch_rad_to_y_pixel_ratio"].as<float>(); 
@@ -109,8 +106,6 @@ public:
         pitch_rad_to_y_pixel_ratio = camera_matrix_Node[1][1].as<float>(); 
 
 
-        max_armor_position_height = (*config_file_ptr)["max_armor_position_height"].as<float>(); 
-        
         params_.min_light_height = (*config_file_ptr)["min_light_height"].as<int>();
         params_.light_min_area = (*config_file_ptr)["light_min_area"].as<int>();
         params_.light_max_area = (*config_file_ptr)["light_max_area"].as<int>();
@@ -151,32 +146,13 @@ public:
             params_.enemy_color = Params::GREEN;
         }
 
-        light_detector_ = std::make_shared<LightBarDetector>(params_, config_file_ptr, this);
-        armor_detector_ = std::make_shared<ArmorDetector>(config_file_ptr, this);
-        classifier_ = std::make_shared<ArmorClassifier>(config_file_ptr, this, ws_dir_path);
-        armor_solver_ = std::make_shared<ArmorSolver>(config_file_ptr, this);
-        ballistic_solver_ = std::make_shared<BallisticSolver>(config_file_ptr, this);
-
-        rest_frame_ = std::make_shared<RestFrame>();
-        rest_frame_ -> updateCamOrientation(0, 0, 0);
-        rest_frame_ -> updateCamPosition(0, 0, 0);
-
-        fps_counter = std::make_shared<FrameRateCounter>(30); // 30帧滑动窗口统计帧率
-
-        predictor_main_ = std::make_shared<PredictorMain>(
-            config_file_ptr, this, node_start_time, armor_solver_,
-            ballistic_solver_, rest_frame_, fps_counter);
-
-        rp24_yolo_wrapper = std::make_shared<RP24YOLOWrapper>(config_file_ptr, this, 
-            ws_dir_path / (*config_file_ptr)["RP24_YOLO_model_relative_path"].as<std::string>(), 
-            (*config_file_ptr)["RP24_YOLO_device"].as<std::string>());
-
-        yaw_visualizer_ = std::make_shared<YawVisualizer>();
-
         com_data_visualize_frame = cv::Mat::zeros(480, 640, CV_8UC3);
-#if (defined LOG_RESULT_VIDEO) or (defined LOG_ORIGIN_VIDEO)
-        two_video_logger = std::make_shared<TwoVideoLogger>(ws_dir_path / "VideoLog");
-#endif
+
+        auto_aim_pipeline_ = std::make_shared<AutoAimPipeline>(
+            config_file_ptr,
+            this,
+            ws_dir_path,
+            node_start_time);
 
         DelayInfos init_serial_infos;
         init_serial_infos.last_pitch_rad_ = 0.0;
@@ -285,8 +261,8 @@ private:
         float start_yaw = last_yaw_rad_imu_ + headIMUInfos.to_mcu_delta_yaw;
         float start_pitch = last_pitch_rad_delayed_;
 
-        if (predictor_main_) {
-            predictor_main_ -> reset_yaw_integration();
+        if (auto_aim_pipeline_) {
+            auto_aim_pipeline_->resetYawIntegration();
         }
 
         for (int i = 0; i < 20; i++) {
@@ -435,10 +411,6 @@ private:
         } else if (enemy_color_ == "BLUE") {
             params_.enemy_color = Params::BLUE;
         }
-        if (light_detector_) {
-            light_detector_->setEnemyColor(processed_msg.color == 0 ? Params::RED : Params::BLUE);
-        }
-
         if (current_yaw_ < -M_PI/2 && last_yaw_rad_mcu_ > M_PI/2) {
             current_yaw_circle_mcu_ += 1;
         } else if (current_yaw_ > M_PI/2 && last_yaw_rad_mcu_ < -M_PI/2) {
@@ -467,130 +439,11 @@ private:
         }
     }
 
-    void drawResults(cv::Mat& image, 
-                     const std::vector<Light>& lights,
-                     const std::vector<Armor>& armors,
-                     const std::vector<ArmorResult>& classifyResults) {
-        // cv::Mat result = image.clone();
-        cv::Mat& result = image;
-
-        // 0. 绘制平面地面系不动点（DEBUG）
-        cv::circle(result, ground_stable_point, 10, cv::Scalar(0, 255, 0), 2);
-        /* cv::circle(result, cv::Point2f(1000, 1000) - ground_stable_point, 10, cv::Scalar(0, 255, 0), 2);
-        for (const auto& res : classifyResults) {
-            for (size_t i = 0; i < res.corners.size() && i < 4; i++) {
-                cv::line(result, res.corners[i] - ground_stable_point + cv::Point2f(500, 500), 
-                        res.corners[(i+1)%4] - ground_stable_point + cv::Point2f(500, 500), 
-                        cv::Scalar(0, 255, 0), 2);
-            }    
-        } */                       
-        // 绘制3D面系不动点
-        cv::Point3f test_point_pos = rest_frame_ -> worldToPnpP3f({0, 1000, 0});
-        cv::Point2f test_point_pos_pixel = armor_solver_ -> project3DToPixel(test_point_pos);
-        cv::circle(result, test_point_pos_pixel, 8, cv::Scalar(255, 0, 255), 2);
-
-        // 1. 绘制灯条（绿色）
-        for (const auto& light : lights) {
-            cv::Point2f vertices[4];
-            light.el.points(vertices);
-            for (int i = 0; i < 4; i++) {
-                cv::line(result, vertices[i], vertices[(i + 1) % 4], 
-                        cv::Scalar(0, 255, 0), 2);
-            }
-        }
-
-        // 2. 绘制装甲板候选区域（黄色）
-        for (const auto& armor : armors) {
-            for (size_t i = 0; i < armor.corners.size() && i < 4; i++) {
-                cv::line(result, armor.corners[i], 
-                        armor.corners[(i+1)%4], 
-                        cv::Scalar(0, 255, 255), 2);
-            }
-
-            // 显示装甲板置信度
-            if (!armor.corners.empty()) {
-                std::string conf_str = cv::format("conf: %.2f", armor.confidence);
-                cv::Point text_pos(armor.corners[0].x, armor.corners[0].y - 10);
-                cv::putText(result, conf_str, text_pos,
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5, 
-                        cv::Scalar(0, 255, 255), 1);
-            }
-
-            // 绘制灯条顶点
-            for (size_t i = 0; i < armor.light_bar_corners.size() && i < 4; i++) {
-                cv::line(result, armor.light_bar_corners[i], 
-                        armor.light_bar_corners[(i+1)%4], 
-                        cv::Scalar(255, 0, 0), 2);
-            }
-        }
-
-        // 3. 绘制最终识别结果（红色）和跟踪信息
-        for (const auto& res : classifyResults) {
-            // 绘制装甲板轮廓
-            if (res.is_tracked_now) {
-                for (size_t i = 0; i < res.corners.size() && i < 4; i++) {
-                    cv::line(result, res.corners[i], 
-                            res.corners[(i+1)%4], 
-                            cv::Scalar(0, 0, 255), 2);
-                }    
-            } else {
-                for (size_t i = 0; i < res.corners.size() && i < 4; i++) {
-                    cv::line(result, res.corners[i], 
-                            res.corners[(i+1)%4], 
-                            cv::Scalar(255, 0, 255), 2);
-                }    
-            }
-
-            // 绘制灯条顶点
-            for (size_t i = 0; i < res.armor.light_bar_corners.size() && i < 4; i++) {
-                cv::line(result, res.armor.light_bar_corners[i], 
-                        res.armor.light_bar_corners[(i+1)%4], 
-                        cv::Scalar(0, 255, 255), 2);
-            }
-
-            // 绘制预测中心点
-            for (auto& prediction : res.predictions) {
-                cv::circle(result, prediction, 3, cv::Scalar(255, 0, 255), -1);
-            }
-            cv::circle(result, res.center_predicted, 3, cv::Scalar(0, 255, 255), -1);
-
-            // 绘制中心点和编号
-            cv::Point2f center = res.center;
-            cv::circle(result, center, 3, cv::Scalar(0, 0, 255), -1);
-
-            std::string text = cv::format("N%d (%.2f)", 
-                                        res.number, 
-                                        res.confidence);
-            cv::Point text_pos(res.corners[1].x, res.corners[1].y - 10);
-
-            // 使用黑色描边使文字更清晰
-            cv::putText(result, text, text_pos,
-                        cv::FONT_HERSHEY_SIMPLEX, 0.6, 
-                        cv::Scalar(0, 0, 0), 3);
-            cv::putText(result, text, text_pos,
-                        cv::FONT_HERSHEY_SIMPLEX, 0.6, 
-                        cv::Scalar(0, 0, 255), 1);
-
-            // 添加跟踪状态显示
-            std::string track_text = "TRACKING";
-            cv::Point track_pos(center.x - 30, center.y + 30);
-            cv::putText(result, track_text, track_pos,
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                        cv::Scalar(0, 255, 0), 1);
-        }
-
-//         // 在窗口中显示图像
-// #ifdef SHOW_WINDOWS
-//         cv::imshow("Armor Detection", result);
-//         cv::waitKey(1);  // 确保窗口刷新
-// #endif
-    }
-
     void processImage() {
-    
+        auto now = std::chrono::steady_clock::now();
 
         if (std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - headIMUInfos.last_mcu_yaw_update_time).count() > 3000
+            now - headIMUInfos.last_mcu_yaw_update_time).count() > 3000
         ) {
             if (fabs(headIMUInfos.last_mcu_command_yaw - headIMUInfos.latest_mcu_command_yaw_when_mcu_yaw_update)
                 > 5.0 * M_PI / 180.0
@@ -599,31 +452,26 @@ private:
             }
         }
 
-
-
-        while (serial_infos_delay_.size() > 1 && 
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - serial_infos_delay_.front().push_time).count() > serial_delay_time) {
+        while (serial_infos_delay_.size() > 1 &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - serial_infos_delay_.front().push_time).count() > serial_delay_time) {
             serial_infos_delay_.pop();
         }
+
         DelayInfos delayed_serial_infos = serial_infos_delay_.front();
         last_pitch_rad_delayed_ = delayed_serial_infos.last_pitch_rad_;
         last_yaw_rad_delayed_ = delayed_serial_infos.last_yaw_rad_;
         total_yaw_rad_delayed_ = delayed_serial_infos.total_yaw_rad_;
         last_roll_rad_delayed_ = delayed_serial_infos.last_roll_rad_;
-        ground_stable_point = cv::Point2f(500+total_yaw_rad_delayed_*yaw_rad_to_x_pixel_ratio, 500+last_pitch_rad_delayed_*pitch_rad_to_y_pixel_ratio);
-        rest_frame_ -> updateCamOrientation(last_yaw_rad_delayed_, last_pitch_rad_delayed_, last_roll_rad_delayed_);
-        rest_frame_ -> updateCamPosition(0, 0, 0); // 预留位置接口
-        predictor_main_ -> update_serial_info(bullet_velocity_, last_pitch_rad_delayed_, last_yaw_rad_delayed_, total_yaw_rad_delayed_);
-        RCLCPP_DEBUG(this->get_logger(), "ground_stable_point: %.2f %.2f", ground_stable_point.x, ground_stable_point.y);
+        ground_stable_point = cv::Point2f(
+            500 + total_yaw_rad_delayed_ * yaw_rad_to_x_pixel_ratio,
+            500 + last_pitch_rad_delayed_ * pitch_rad_to_y_pixel_ratio);
+        RCLCPP_DEBUG(this->get_logger(), "ground_stable_point: %.2f %.2f",
+            ground_stable_point.x, ground_stable_point.y);
 
-
-
-
-        
         cv::Mat frame;
 #if defined(USE_VIDEO) || defined(USE_IMAGES) || defined(SYNC_CAMERA_FPS)
-        while (image_used)
-        {
+        while (image_used) {
             usleep(1000);
         }
 #endif
@@ -634,175 +482,97 @@ private:
         }
         pthread_mutex_unlock(&g_mutex);
 
+        bool auto_aim_switch = true;
+        if (((!headIMUInfos.last_auto_aim_switch) && auto_aim_switch) &&
+            (headIMUInfos.use_head_imu && (!headIMUInfos.mcu_yaw_online))
+        ) {
+            recalibrateHeadIMU();
+        }
+        headIMUInfos.last_auto_aim_switch = auto_aim_switch;
+
         if (!frame.empty()) {
 #ifdef SAVE_IMG_FREQ
             frame_count_ += 1;
             if (frame_count_ % SAVE_IMG_FREQ == 0 && frame_count_ / SAVE_IMG_FREQ < 2000) {
-                // 创建保存目录
                 fs::create_directories("camera_images");
-                // 生成文件名（00001.jpg 格式）
                 std::ostringstream filename;
                 filename << "camera_images/"
-                        << std::setw(5) << std::setfill('0') << (frame_count_ / SAVE_IMG_FREQ)
-                        << ".jpg";
+                         << std::setw(5) << std::setfill('0') << (frame_count_ / SAVE_IMG_FREQ)
+                         << ".jpg";
                 cv::imwrite(filename.str(), frame);
             }
 #endif
 
-#if (defined LOG_RESULT_VIDEO) or (defined LOG_ORIGIN_VIDEO)
-            two_video_logger -> updateOriginFrame(frame);
-#endif
-
-            //cv::resize(frame, frame, cv::Size(768, 512), 0, 0, cv::INTER_LINEAR);
-
-            //cv::flip(frame, frame, -1);  // 翻转图像（上下翻转）
-
-            std::vector<Light> lights;
-            std::vector<Armor> armors;
-            std::vector<ArmorResult> classifyResults;
-
-            if (use_RP24_YOLO) {
-                // armors = rp24_yolo_wrapper -> detectArmors(frame, enemy_color_);
-                // for (Armor& armor : armors) {
-                //     lights.emplace_back(armor.leftLight);
-                //     lights.emplace_back(armor.rightLight);
-                // }
-                // classifyResults = classifier_->classify(frame, armors, ground_stable_point);
-                classifyResults = rp24_yolo_wrapper -> detectArmorsWithClassifyAndTrack(frame, enemy_color_, ground_stable_point, &armors);
-                for (Armor& armor : armors) {
-                    lights.emplace_back(armor.leftLight);
-                    lights.emplace_back(armor.rightLight);
-                }
-            } else {
-
-                // 检测灯条
-                light_detector_->detectLights(frame);
-                light_detector_->processLights();
-                lights = light_detector_->getLights();
-                
-                // 检测装甲板
-                armors = armor_detector_->detectArmors(lights);
-                classifyResults = classifier_->classify(frame, armors, ground_stable_point);
-            }
-
-            std::vector<ArmorResult> classifyResults_withSolveArmorResult;
-            for (ArmorResult &classify_result : classifyResults) {
-                AimResult solve_armor_result = armor_solver_->solveArmor(classify_result, last_pitch_rad_delayed_, last_yaw_rad_delayed_);
-                cv::Point3f rest_frame_pos = rest_frame_ -> pnpToWorldP3f(solve_armor_result.position);
-                if (rest_frame_pos.z < max_armor_position_height && solve_armor_result.valid) { // 高度高于一定值视为无效
-                    classifyResults_withSolveArmorResult.emplace_back(classify_result);
-                    classifyResults_withSolveArmorResult.back().solve_armor_result = solve_armor_result;
-                }
-            }
-
-            bool auto_aim_switch = true;
-            if (((!headIMUInfos.last_auto_aim_switch) && auto_aim_switch) &&
-                (headIMUInfos.use_head_imu && (!headIMUInfos.mcu_yaw_online))
-            ) { // 仅在使用IMU且电控yaw轴数据掉线时在开启自瞄时校准
-                recalibrateHeadIMU();
-            }
-            headIMUInfos.last_auto_aim_switch = auto_aim_switch;
-            PredictorResult predictor_result = predictor_main_ -> step(classifyResults_withSolveArmorResult, frame, 
-                                                                       PredictorType::AutoSwitch, ArmorType::Nearest, 
-                                                                       auto_aim_switch, headIMUInfos.mcu_yaw_online); // Todo
-            float mcu_command_pitch = predictor_result.command_pitch;
-            float mcu_command_yaw = predictor_result.command_yaw;
-            if (headIMUInfos.use_head_imu) {
-                mcu_command_pitch = predictor_result.command_pitch; // + headIMUInfos.to_mcu_delta_pitch;
-                mcu_command_yaw = predictor_result.command_yaw + headIMUInfos.to_mcu_delta_yaw;
-            }
-            headIMUInfos.last_mcu_command_yaw = mcu_command_yaw;
-            if (predictor_result.reset) {
-                // RCLCPP_INFO(this->get_logger(), "send data: yaw[%.2f] pitch[%.2f] fire[%d]", 0.0, 0.0, false);
-                serial_communication_->sendData(0.0, 0.0, false);
-            } else {
-                // RCLCPP_INFO(this->get_logger(), "send data: yaw[%.2f] pitch[%.2f] fire[%d]", predictor_result.command_pitch, predictor_result.command_yaw, predictor_result.fire_flag);
-                serial_communication_->sendData(mcu_command_pitch, mcu_command_yaw, predictor_result.fire_flag);
-            }
-            
-            // 显示当前参数状态
-            cv::putText(frame, 
-                cv::format("V: %.1f m/s, P: %.1f, Y: %.1f", 
-                    bullet_velocity_, last_pitch_rad_delayed_, last_yaw_rad_delayed_),
-                cv::Point(20, 50),
-                cv::FONT_HERSHEY_COMPLEX, 0.7, 
-                cv::Scalar(0, 255, 0), 1, 8, false);
-            cv::putText(frame, 
-                "enemy_color: " + enemy_color_, 
-                cv::Point2f(20,80), 
-                cv::FONT_HERSHEY_COMPLEX, 0.7, 
-                cv::Scalar(0, 255, 0), 1, 8, false);
-            cv::putText(frame, 
-                "aiming "+ArmorType::ArmorTypeStrings[predictor_result.armor_type]+": "+PredictorType::PredictorTypeStrings[predictor_result.predictor_type], 
-                cv::Point2f(20, 110), 
-                cv::FONT_HERSHEY_COMPLEX, 0.7, 
-                cv::Scalar(0, 255, 0), 1, 8, false);
-
-            drawRestFrame(frame, rest_frame_, armor_solver_);
-
-            drawResults(frame, lights, armors, classifyResults_withSolveArmorResult);
-
-            yaw_visualizer_ -> update(last_yaw_rad_delayed_ + (headIMUInfos.use_head_imu ? headIMUInfos.to_mcu_delta_yaw : 0.0), mcu_command_yaw);
-            // yaw_visualizer_ -> show();
-            cv::Mat yaw_visualizer_frame = yaw_visualizer_ -> getDisplay();
-
-            //计算帧率
-            fps_counter->tick();
-
-            cv::putText(frame, 
-                cv::format("frame rate: %.1f fps", fps_counter->fps()), 
-                cv::Point(20, 140),
-                cv::FONT_HERSHEY_COMPLEX, 0.7, 
-                cv::Scalar(0, 255, 0), 1, 8, false);
-            cv::putText(frame, 
-                cv::format("since start: %.4f s", static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - node_start_time).count()) / 1000.0f), 
-                cv::Point(20, 170),
-                cv::FONT_HERSHEY_COMPLEX, 0.7, 
-                cv::Scalar(0, 255, 0), 1, 8, false);
-            auto system_clock_now = std::chrono::system_clock::now();
-            std::time_t system_clock_now_t = std::chrono::system_clock::to_time_t(system_clock_now);
-            std::tm* system_clock_now_tm = std::localtime(&system_clock_now_t);
-            char system_clock_now_str_buffer[80];
-            std::strftime(system_clock_now_str_buffer, sizeof(system_clock_now_str_buffer), "%Y-%m-%d %H:%M:%S", system_clock_now_tm);
-            cv::putText(frame, 
-                cv::format("system_clock: %s", system_clock_now_str_buffer), 
-                cv::Point(20, 200),
-                cv::FONT_HERSHEY_COMPLEX, 0.7, 
-                cv::Scalar(0, 255, 0), 1, 8, false);
-
-#if (defined LOG_RESULT_VIDEO) or (defined LOG_ORIGIN_VIDEO)
-            two_video_logger -> updateDrewFrame(frame);
-            two_video_logger -> updateRMMFrame(predictor_result.info_images.RMM_visualize_frame);
-            two_video_logger -> updateCDOFrame(predictor_result.info_images.common_debug_oscilloscope_frame);
-            two_video_logger -> updateYawFrame(yaw_visualizer_frame);
-            two_video_logger -> updateComFrame(com_data_visualize_frame);
-            com_data_visualize_frame_used = true;
-            two_video_logger -> writeTwoFrame();
-#endif
-                
-#ifdef SHOW_WINDOWS
-            if (!predictor_result.info_images.RMM_visualize_frame.empty()) {
-                cv::imshow("RMM visualize", predictor_result.info_images.RMM_visualize_frame);
-            }
-            if (!predictor_result.info_images.common_debug_oscilloscope_frame.empty()) {
-                cv::imshow("Common Debug Oscilloscope", predictor_result.info_images.common_debug_oscilloscope_frame);
-            }
-            if (!yaw_visualizer_frame.empty()) {
-                cv::imshow("Yaw Visualizer", yaw_visualizer_frame);
-            }
-            cv::imshow("Armor Detection", frame);
-            cv::waitKey(1);  // 确保窗口刷新
-#endif
-
-
-            if (std::chrono::steady_clock::now() - last_feed_dog_time >= std::chrono::seconds(3)) {
-                watchdog_client -> feed();
-                last_feed_dog_time = std::chrono::steady_clock::now();
-            } // 正常运行时，每3秒喂一次狗
+            AutoAimPipelineData::InitialData initial;
+            initial.frame = std::move(frame);
+            initial.com_data_visualize_frame = com_data_visualize_frame.clone();
+            initial.frame_timestamp = now;
+            initial.node_start_time = node_start_time;
+            initial.bullet_velocity = bullet_velocity_;
+            initial.enemy_color = enemy_color_;
+            initial.pitch = last_pitch_rad_delayed_;
+            initial.yaw = last_yaw_rad_delayed_;
+            initial.total_yaw = total_yaw_rad_delayed_;
+            initial.roll = last_roll_rad_delayed_;
+            initial.ground_stable_point = ground_stable_point;
+            initial.auto_aim_switch = auto_aim_switch;
+            initial.use_head_imu = headIMUInfos.use_head_imu;
+            initial.mcu_yaw_online = headIMUInfos.mcu_yaw_online;
+            initial.to_mcu_delta_yaw = headIMUInfos.to_mcu_delta_yaw;
+            initial.to_mcu_delta_pitch = headIMUInfos.to_mcu_delta_pitch;
+            auto_aim_pipeline_->addFrame(std::move(initial));
         }
 
-        // 获取处理帧率
-        RCLCPP_INFO(this->get_logger(), "frame rate: %.1f fps\n" , fps_counter->fps());
+        AutoAimPipeline::ProcessResult result = auto_aim_pipeline_->tryPopResult(now);
+        if (!result.valid) {
+            return;
+        }
+
+        headIMUInfos.last_mcu_command_yaw = result.valid_data.mcu_command_yaw;
+        if (result.valid_data.should_send_reset) {
+            serial_communication_->sendData(0.0, 0.0, false);
+        } else {
+            serial_communication_->sendData(
+                result.valid_data.mcu_command_pitch,
+                result.valid_data.mcu_command_yaw,
+                result.valid_data.predictor_result.fire_flag);
+        }
+
+#if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
+        if (result.valid_data.request_com_frame_refresh) {
+            com_data_visualize_frame_used = true;
+        }
+#endif
+
+#ifdef SHOW_WINDOWS
+        if (!result.valid_data.rmm_visualize_frame.empty()) {
+            cv::imshow("RMM visualize", result.valid_data.rmm_visualize_frame);
+        }
+        if (!result.valid_data.common_debug_oscilloscope_frame.empty()) {
+            cv::imshow("Common Debug Oscilloscope", result.valid_data.common_debug_oscilloscope_frame);
+        }
+        if (!result.valid_data.yaw_visualizer_frame.empty()) {
+            cv::imshow("Yaw Visualizer", result.valid_data.yaw_visualizer_frame);
+        }
+        if (!result.valid_data.display.empty()) {
+            cv::imshow("Armor Detection", result.valid_data.display);
+        }
+        cv::waitKey(1);
+#endif
+
+        if (std::chrono::steady_clock::now() - last_feed_dog_time >= std::chrono::seconds(3)) {
+            watchdog_client->feed();
+            last_feed_dog_time = std::chrono::steady_clock::now();
+        }
+
+        RCLCPP_INFO(this->get_logger(),
+            "armor_count: %zu | Q[in:%d i0:%d i1:%d i2:%d out:%d]",
+            result.valid_data.armor_count,
+            result.always_valid_data.queue_input,
+            result.always_valid_data.queue_inter0,
+            result.always_valid_data.queue_inter1,
+            result.always_valid_data.queue_inter2,
+            result.always_valid_data.queue_output);
     }
 
     // 参数文件
@@ -814,17 +584,10 @@ private:
     std::thread main_loop_thread_;
     
     std::shared_ptr<Camera> camera_;
-    std::shared_ptr<LightBarDetector> light_detector_;
-    std::shared_ptr<ArmorDetector> armor_detector_;
-    std::shared_ptr<ArmorSolver> armor_solver_;
-    std::shared_ptr<ArmorClassifier> classifier_;
-    std::shared_ptr<BallisticSolver> ballistic_solver_;
 
     std::shared_ptr<VideoInput> video_input_;
     std::shared_ptr<ImagesInput> images_input_;
     float frame_rate_;
-
-    std::shared_ptr<RestFrame> rest_frame_;
 
     std::chrono::time_point<std::chrono::steady_clock> node_start_time;
     
@@ -858,8 +621,6 @@ private:
     std::string enemy_color_;
     Params params_;
 
-    // 帧率计算器
-    std::shared_ptr<FrameRateCounter> fps_counter;
 #ifdef SAVE_IMG_FREQ
     long long frame_count_ = 0;
 #endif
@@ -867,13 +628,6 @@ private:
     std::shared_ptr<SerialCommunicationClass> serial_communication_;
     float yaw_rad_to_x_pixel_ratio;
     float pitch_rad_to_y_pixel_ratio;
-
-    std::shared_ptr<PredictorMain> predictor_main_;
-
-    std::shared_ptr<RP24YOLOWrapper> rp24_yolo_wrapper;
-    bool use_RP24_YOLO;
-
-    float max_armor_position_height;
 
     std::shared_ptr<WatchdogClient> watchdog_client;
     std::chrono::steady_clock::time_point last_feed_dog_time;
@@ -904,11 +658,10 @@ private:
         bool last_auto_aim_switch = true; // 用于在开启自瞄时进行校准
     } headIMUInfos;
 
-    std::shared_ptr<YawVisualizer> yaw_visualizer_;
-
-    std::shared_ptr<TwoVideoLogger> two_video_logger;
     cv::Mat com_data_visualize_frame;
     bool com_data_visualize_frame_used = true;
+
+    std::shared_ptr<AutoAimPipeline> auto_aim_pipeline_;
 };
 
 std::shared_ptr<ArmorDetectNode> node;

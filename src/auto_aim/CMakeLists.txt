@@ -97,6 +97,7 @@ add_library(armor_detector SHARED
     src/logger/MkvWriter.cpp
     src/RP24_YOLO/OpenvinoInfer.cpp
     src/RP24_YOLO/RP24_YOLO_Wrapper.cpp
+    src/pipeline/AutoAimPipeline.cpp
 )
 #add_library(crc_lib SHARED
 #    src/nodes/CRC.cpp

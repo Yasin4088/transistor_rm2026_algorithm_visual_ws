@@ -1,0 +1,236 @@
+#pragma once //防止重复包含
+
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <opencv2/opencv.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <yaml-cpp/yaml.h>
+
+#include "2d_armor_detector/Armor.h"
+#include "2d_armor_detector/ArmorClassifier.h"
+#include "2d_armor_detector/ArmorDetector.h"
+#include "2d_armor_detector/LightBarDetector.h"
+#include "3d_processing/ArmorSolver.h"
+#include "3d_processing/BallisticSolver.h"
+#include "3d_processing/RestFrame.h"
+#include "RP24_YOLO/RP24_YOLO_Wrapper.h"
+#include "logger/TwoVideoLogger.h"
+#include "predictor/PredictorMain.h"
+#include "utils/FrameRateCounter.h"
+#include "visualizer/YawVisualizer.h"
+
+struct AutoAimPipelineData {
+    struct InitialData {
+        cv::Mat frame;
+        cv::Mat com_data_visualize_frame;
+        std::chrono::steady_clock::time_point frame_timestamp;
+        std::chrono::steady_clock::time_point node_start_time;
+
+        float bullet_velocity = 0.0f;
+        std::string enemy_color;
+        float pitch = 0.0f;
+        float yaw = 0.0f;
+        float total_yaw = 0.0f;
+        float roll = 0.0f;
+        cv::Point2f ground_stable_point;
+
+        bool auto_aim_switch = true;
+        bool use_head_imu = false;
+        bool mcu_yaw_online = true;
+        float to_mcu_delta_yaw = 0.0f;
+        float to_mcu_delta_pitch = 0.0f;
+    } initial;
+
+    struct Stage1Data {
+        std::vector<Light> lights;
+        std::vector<Armor> armors;
+        std::vector<ArmorResult> classify_results;
+        bool used_yolo = false;
+    } stage1;
+
+    struct Stage2Data {
+        std::vector<ArmorResult> solved_results;
+        std::vector<cv::Point3f> rest_frame_positions;
+        size_t valid_count = 0;
+    } stage2;
+
+    struct Stage3Data {
+        PredictorResult predictor_result;
+        float mcu_command_pitch = 0.0f;
+        float mcu_command_yaw = 0.0f;
+        bool should_send_reset = false;
+    } stage3;
+
+    struct Stage4Data {
+        cv::Mat display;
+        cv::Mat yaw_visualizer_frame;
+        cv::Mat rmm_visualize_frame;
+        cv::Mat common_debug_oscilloscope_frame;
+        size_t armor_count = 0;
+        bool request_com_frame_refresh = false;
+    } stage4;
+};
+
+class AutoAimPipeline {
+public:
+    struct AlwaysValidData {
+        int queue_input = 0;
+        int queue_inter0 = 0;
+        int queue_inter1 = 0;
+        int queue_inter2 = 0;
+        int queue_output = 0;
+    };
+
+    struct ValidData {
+        PredictorResult predictor_result;
+        float mcu_command_pitch = 0.0f;
+        float mcu_command_yaw = 0.0f;
+        bool should_send_reset = false;
+        cv::Mat display;
+        cv::Mat yaw_visualizer_frame;
+        cv::Mat rmm_visualize_frame;
+        cv::Mat common_debug_oscilloscope_frame;
+        size_t armor_count = 0;
+        bool request_com_frame_refresh = false;
+    };
+
+    struct ProcessResult {
+        ValidData valid_data;
+        AlwaysValidData always_valid_data;
+        bool valid = false;
+    };
+
+    AutoAimPipeline(std::shared_ptr<YAML::Node> config_file_ptr,
+                    rclcpp::Node* node,
+                    const std::filesystem::path& workspace_path,
+                    std::chrono::steady_clock::time_point node_start_time,
+                    int max_queue_size = 4,
+                    float max_delay_seconds = 0.0f);
+    ~AutoAimPipeline();
+
+    void addFrame(AutoAimPipelineData::InitialData initial);
+    ProcessResult tryPopResult(const std::chrono::steady_clock::time_point& timestamp);
+    void resetYawIntegration();
+
+private:
+    static constexpr int NUM_STAGES = 4;
+    static constexpr int NUM_QUEUES = NUM_STAGES + 1;
+
+    int max_queue_size_;
+    float max_delay_seconds_;
+
+    std::deque<std::unique_ptr<AutoAimPipelineData>> input_queue_;
+    std::mutex input_mtx_;
+    std::condition_variable input_cv_;
+
+    std::deque<std::unique_ptr<AutoAimPipelineData>> inter_queues_[NUM_STAGES - 1];
+    std::deque<std::unique_ptr<AutoAimPipelineData>> output_queue_;
+    std::mutex output_mtx_;
+
+    std::unique_ptr<AutoAimPipelineData> in_flight_[NUM_STAGES];
+    std::atomic<int> queue_sizes_[NUM_QUEUES];
+
+    struct Stage1 {
+        std::shared_ptr<LightBarDetector> light_detector;
+        std::shared_ptr<ArmorDetector> armor_detector;
+        std::shared_ptr<ArmorClassifier> classifier;
+        std::shared_ptr<RP24YOLOWrapper> rp24_yolo_wrapper;
+        bool use_rp24_yolo = false;
+
+        std::thread worker;
+        std::atomic<bool> idle{true};
+        std::mutex mtx;
+        std::condition_variable cv;
+        AutoAimPipelineData* data = nullptr;
+        bool exit_flag = false;
+
+        Stage1(std::shared_ptr<YAML::Node> config_file_ptr,
+               rclcpp::Node* node,
+               const std::filesystem::path& workspace_path);
+        void start(AutoAimPipelineData& d);
+        bool isIdle() const;
+        void run();
+    } stage1_;
+
+    struct Stage2 {
+        std::shared_ptr<ArmorSolver> armor_solver;
+        std::shared_ptr<RestFrame> rest_frame;
+        float max_armor_position_height = 0.0f;
+
+        std::thread worker;
+        std::atomic<bool> idle{true};
+        std::mutex mtx;
+        std::condition_variable cv;
+        AutoAimPipelineData* data = nullptr;
+        bool exit_flag = false;
+
+        Stage2(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node);
+        void start(AutoAimPipelineData& d);
+        bool isIdle() const;
+        void run();
+    } stage2_;
+
+    struct Stage3 {
+        std::shared_ptr<ArmorSolver> armor_solver;
+        std::shared_ptr<BallisticSolver> ballistic_solver;
+        std::shared_ptr<RestFrame> rest_frame;
+        std::shared_ptr<FrameRateCounter> fps_counter;
+        std::shared_ptr<PredictorMain> predictor_main;
+
+        std::thread worker;
+        std::atomic<bool> idle{true};
+        std::mutex mtx;
+        std::condition_variable cv;
+        AutoAimPipelineData* data = nullptr;
+        bool exit_flag = false;
+
+        Stage3(std::shared_ptr<YAML::Node> config_file_ptr,
+               rclcpp::Node* node,
+               std::chrono::steady_clock::time_point node_start_time);
+        void start(AutoAimPipelineData& d);
+        bool isIdle() const;
+        void run();
+        void resetYawIntegration();
+    } stage3_;
+
+    struct Stage4 {
+        std::shared_ptr<ArmorSolver> armor_solver;
+        std::shared_ptr<RestFrame> rest_frame;
+        std::shared_ptr<FrameRateCounter> fps_counter;
+        std::shared_ptr<YawVisualizer> yaw_visualizer;
+        std::shared_ptr<TwoVideoLogger> two_video_logger;
+
+        std::thread worker;
+        std::atomic<bool> idle{true};
+        std::mutex mtx;
+        std::condition_variable cv;
+        AutoAimPipelineData* data = nullptr;
+        bool exit_flag = false;
+
+        Stage4(std::shared_ptr<YAML::Node> config_file_ptr,
+               rclcpp::Node* node,
+               const std::filesystem::path& workspace_path);
+        void start(AutoAimPipelineData& d);
+        bool isIdle() const;
+        void run();
+
+    private:
+        void drawResults(cv::Mat& image, const AutoAimPipelineData& d);
+    } stage4_;
+
+    std::thread scheduler_thread_;
+    std::atomic<bool> scheduler_exit_{false};
+
+    void schedulerLoop();
+    void updateQueueSizes();
+};
