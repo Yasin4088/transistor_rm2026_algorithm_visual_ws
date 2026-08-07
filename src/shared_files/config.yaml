@@ -26,6 +26,27 @@ images_relative_path : "InputImages"                    # 使用图片输入时�
 
 RMM_visualize_zoom_out_factor : 10.0 # 平面可视化缩放系数，该值越大视野范围越大
 
+# 可视化设置
+visualizer:
+  enable: true
+  show_windows: true
+  log_video: true
+  draw:
+    main_result: true
+    status_text: true
+    rest_frame: true
+    ground_stable_point: true
+    aim_reference_point: true
+    lights: true
+    armors: true
+    solved_armors: true
+    predictions: true
+    yaw_curve: true
+    rmm: true
+    common_debug_oscilloscope: true
+    gimbal_coordinate: true
+    com_data: true
+
 frame_rate : 80.0   # fps
 serial_delay_time : 30.0 # ms           电控传来的信息相对相机画面快的时间，将对电控信息再延迟这个时间以同步两者
 extra_predict_time : 0.170 # s          除了弹丸飞行时间以外的需要预测器补偿的总时间

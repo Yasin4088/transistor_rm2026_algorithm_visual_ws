@@ -28,7 +28,7 @@
 #include "predictor/PredictorMain.h"
 #include "utils/FrameRateCounter.h"
 #include "utils/PerformanceMonitor.h"
-#include "visualizer/YawVisualizer.h"
+#include "visualizer/AutoAimVisualizer.h"
 
 struct AutoAimPipelineData {
     struct InitialData {
@@ -210,11 +210,9 @@ private:
     } stage3_;
 
     struct Stage4 {
-        std::shared_ptr<ArmorSolver> armor_solver;
-        std::shared_ptr<RestFrame> rest_frame;
-        std::shared_ptr<FrameRateCounter> fps_counter;
-        std::shared_ptr<YawVisualizer> yaw_visualizer;
+        std::shared_ptr<AutoAimVisualizer> visualizer;
         std::shared_ptr<TwoVideoLogger> two_video_logger;
+        VisualizerConfig visualizer_config;
 
         std::thread worker;
         std::atomic<bool> idle{true};
@@ -229,9 +227,6 @@ private:
         void start(AutoAimPipelineData& d);
         bool isIdle() const;
         void run();
-
-    private:
-        void drawResults(cv::Mat& image, const AutoAimPipelineData& d);
     } stage4_;
 
     std::thread scheduler_thread_;

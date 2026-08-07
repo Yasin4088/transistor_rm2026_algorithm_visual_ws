@@ -74,6 +74,7 @@ add_library(armor_detector SHARED
     src/predictor/PredictorSwitcher.cpp
     src/predictor/PredictorMain.cpp
     # src/predictor/RotationJudge.cpp
+    src/visualizer/AutoAimVisualizer.cpp
     src/visualizer/DataVisualizer.cpp
     src/visualizer/RestFrameDraw.cpp
     src/visualizer/YawVisualizer.cpp

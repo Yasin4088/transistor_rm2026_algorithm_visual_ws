@@ -7,7 +7,6 @@
 #include <stdexcept>
 
 #include "macro/AutoAimMacro.h"
-#include "visualizer/RestFrameDraw.h"
 
 namespace {
 
@@ -310,14 +309,12 @@ AutoAimPipeline::Stage4::Stage4(std::shared_ptr<YAML::Node> config_file_ptr,
                                 rclcpp::Node* node,
                                 const std::filesystem::path& workspace_path)
 {
-    armor_solver = std::make_shared<ArmorSolver>(config_file_ptr, node);
-    rest_frame = std::make_shared<RestFrame>();
-    rest_frame->updateCamOrientation(0, 0, 0);
-    rest_frame->updateCamPosition(0, 0, 0);
-    fps_counter = std::make_shared<FrameRateCounter>(30);
-    yaw_visualizer = std::make_shared<YawVisualizer>();
+    visualizer = std::make_shared<AutoAimVisualizer>(config_file_ptr, node);
+    visualizer_config = visualizer->config();
 #if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
-    two_video_logger = std::make_shared<TwoVideoLogger>(workspace_path / "VideoLog");
+    if (visualizer_config.enable && visualizer_config.log_video) {
+        two_video_logger = std::make_shared<TwoVideoLogger>(workspace_path / "VideoLog");
+    }
 #endif
 }
 
@@ -351,182 +348,53 @@ void AutoAimPipeline::Stage4::run()
 
         const auto stage_start_time = PerfClock::now();
         d->stage4 = AutoAimPipelineData::Stage4Data{};
-        rest_frame->updateCamOrientation(
-            d->initial.yaw,
-            d->initial.pitch,
-            d->initial.roll);
-        rest_frame->updateCamPosition(0, 0, 0);
+        AutoAimVisualizerInput visualizer_input;
+        visualizer_input.frame = &d->initial.frame;
+        visualizer_input.node_start_time = d->initial.node_start_time;
+        visualizer_input.bullet_velocity = d->initial.bullet_velocity;
+        visualizer_input.enemy_color = d->initial.enemy_color;
+        visualizer_input.pitch = d->initial.pitch;
+        visualizer_input.yaw = d->initial.yaw;
+        visualizer_input.roll = d->initial.roll;
+        visualizer_input.ground_stable_point = d->initial.ground_stable_point;
+        visualizer_input.use_head_imu = d->initial.use_head_imu;
+        visualizer_input.to_mcu_delta_yaw = d->initial.to_mcu_delta_yaw;
+        visualizer_input.to_mcu_delta_pitch = d->initial.to_mcu_delta_pitch;
+        visualizer_input.lights = &d->stage1.lights;
+        visualizer_input.armors = &d->stage1.armors;
+        visualizer_input.solved_results = &d->stage2.solved_results;
+        visualizer_input.predictor_result = &d->stage3.predictor_result;
+        visualizer_input.mcu_command_yaw = d->stage3.mcu_command_yaw;
 
-        cv::Mat display = d->initial.frame.clone();
+        AutoAimVisualizerOutput visualizer_output = visualizer->render(visualizer_input);
 
-        cv::putText(display,
-            cv::format("V: %.1f m/s, P: %.1f, Y: %.1f",
-                d->initial.bullet_velocity, d->initial.pitch, d->initial.yaw),
-            cv::Point(20, 50),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-        cv::putText(display,
-            "enemy_color: " + d->initial.enemy_color,
-            cv::Point2f(20, 80),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-        cv::putText(display,
-            "aiming " +
-                ArmorType::ArmorTypeStrings[d->stage3.predictor_result.armor_type] +
-                ": " +
-                PredictorType::PredictorTypeStrings[d->stage3.predictor_result.predictor_type],
-            cv::Point2f(20, 110),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-
-        drawRestFrame(display, rest_frame, armor_solver);
-        drawResults(display, *d);
-
-        yaw_visualizer->update(
-            d->initial.yaw + (d->initial.use_head_imu ? d->initial.to_mcu_delta_yaw : 0.0f),
-            d->stage3.mcu_command_yaw);
-        d->stage4.yaw_visualizer_frame = yaw_visualizer->getDisplay();
-
-        fps_counter->tick();
-        cv::putText(display,
-            cv::format("frame rate: %.1f fps", fps_counter->fps()),
-            cv::Point(20, 140),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-        cv::putText(display,
-            cv::format("since start: %.4f s",
-                static_cast<float>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - d->initial.node_start_time).count()) / 1000.0f),
-            cv::Point(20, 170),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-
-        auto system_clock_now = std::chrono::system_clock::now();
-        std::time_t system_clock_now_t = std::chrono::system_clock::to_time_t(system_clock_now);
-        std::tm* system_clock_now_tm = std::localtime(&system_clock_now_t);
-        char system_clock_now_str_buffer[80];
-        std::strftime(system_clock_now_str_buffer, sizeof(system_clock_now_str_buffer),
-            "%Y-%m-%d %H:%M:%S", system_clock_now_tm);
-        cv::putText(display,
-            cv::format("system_clock: %s", system_clock_now_str_buffer),
-            cv::Point(20, 200),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-
-        d->stage4.rmm_visualize_frame =
-            d->stage3.predictor_result.info_images.RMM_visualize_frame;
+        d->stage4.display = std::move(visualizer_output.display);
+        d->stage4.yaw_visualizer_frame = std::move(visualizer_output.yaw_visualizer_frame);
+        d->stage4.rmm_visualize_frame = std::move(visualizer_output.rmm_visualize_frame);
         d->stage4.common_debug_oscilloscope_frame =
-            d->stage3.predictor_result.info_images.common_debug_oscilloscope_frame;
-        d->stage4.armor_count = d->stage2.solved_results.size();
+            std::move(visualizer_output.common_debug_oscilloscope_frame);
+        d->stage4.armor_count = visualizer_output.armor_count;
 
 #if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
         if (two_video_logger) {
             two_video_logger->updateOriginFrame(d->initial.frame);
-            two_video_logger->updateDrewFrame(display);
+            two_video_logger->updateDrewFrame(d->stage4.display);
             two_video_logger->updateRMMFrame(d->stage4.rmm_visualize_frame);
             two_video_logger->updateCDOFrame(d->stage4.common_debug_oscilloscope_frame);
             two_video_logger->updateYawFrame(d->stage4.yaw_visualizer_frame);
-            two_video_logger->updateComFrame(d->initial.com_data_visualize_frame);
+            if (visualizer_config.draw.com_data) {
+                two_video_logger->updateComFrame(d->initial.com_data_visualize_frame);
+            }
             two_video_logger->writeTwoFrame();
             d->stage4.request_com_frame_refresh = true;
         }
 #endif
 
-        d->stage4.display = std::move(display);
         if (d->initial.performance_profile) {
             d->initial.performance_profile->stages["stage4_visualize_log"] +=
                 PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
         }
         idle.store(true);
-    }
-}
-
-void AutoAimPipeline::Stage4::drawResults(cv::Mat& image, const AutoAimPipelineData& d)
-{
-    cv::circle(image, d.initial.ground_stable_point, 10, cv::Scalar(0, 255, 0), 2);
-
-    cv::Point3f test_point_pos = rest_frame->worldToPnpP3f({0, 1000, 0});
-    cv::Point2f test_point_pos_pixel = armor_solver->project3DToPixel(test_point_pos);
-    cv::circle(image, test_point_pos_pixel, 8, cv::Scalar(255, 0, 255), 2);
-
-    for (const auto& light : d.stage1.lights) {
-        cv::Point2f vertices[4];
-        light.el.points(vertices);
-        for (int i = 0; i < 4; i++) {
-            cv::line(image, vertices[i], vertices[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
-        }
-    }
-
-    for (const auto& armor : d.stage1.armors) {
-        for (size_t i = 0; i < armor.corners.size() && i < 4; i++) {
-            cv::line(image, armor.corners[i], armor.corners[(i + 1) % 4],
-                cv::Scalar(0, 255, 255), 2);
-        }
-        if (!armor.corners.empty()) {
-            std::string conf_str = cv::format("conf: %.2f", armor.confidence);
-            cv::Point text_pos(armor.corners[0].x, armor.corners[0].y - 10);
-            cv::putText(image, conf_str, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                cv::Scalar(0, 255, 255), 1);
-        }
-        for (size_t i = 0; i < armor.light_bar_corners.size() && i < 4; i++) {
-            cv::line(image, armor.light_bar_corners[i], armor.light_bar_corners[(i + 1) % 4],
-                cv::Scalar(255, 0, 0), 2);
-        }
-    }
-
-    for (const auto& res : d.stage2.solved_results) {
-        cv::Scalar contour_color = res.is_tracked_now ? cv::Scalar(0, 0, 255)
-                                                      : cv::Scalar(255, 0, 255);
-        for (size_t i = 0; i < res.corners.size() && i < 4; i++) {
-            cv::line(image, res.corners[i], res.corners[(i + 1) % 4], contour_color, 2);
-        }
-        for (size_t i = 0; i < res.armor.light_bar_corners.size() && i < 4; i++) {
-            cv::line(image, res.armor.light_bar_corners[i],
-                res.armor.light_bar_corners[(i + 1) % 4],
-                cv::Scalar(0, 255, 255),
-                2);
-        }
-        for (auto& prediction : res.predictions) {
-            cv::circle(image, prediction, 3, cv::Scalar(255, 0, 255), -1);
-        }
-        cv::circle(image, res.center_predicted, 3, cv::Scalar(0, 255, 255), -1);
-        cv::circle(image, res.center, 3, cv::Scalar(0, 0, 255), -1);
-
-        std::string text = cv::format("N%d (%.2f)", res.number, res.confidence);
-        cv::Point text_pos(res.corners[1].x, res.corners[1].y - 10);
-        cv::putText(image, text, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.6,
-            cv::Scalar(0, 0, 0), 3);
-        cv::putText(image, text, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.6,
-            cv::Scalar(0, 0, 255), 1);
-
-        cv::Point track_pos(res.center.x - 30, res.center.y + 30);
-        cv::putText(image, "TRACKING", track_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5,
-            cv::Scalar(0, 255, 0), 1);
     }
 }
 

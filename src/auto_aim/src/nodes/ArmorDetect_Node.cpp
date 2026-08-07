@@ -30,6 +30,7 @@
 #include "other_input/VideoInput.h"
 #include "pipeline/AutoAimPipeline.h"
 #include "utils/PerformanceMonitor.h"
+#include "visualizer/VisualizerConfig.h"
 
 namespace fs = std::filesystem;
 
@@ -72,6 +73,11 @@ public:
         fs::path config_file_path = ws_dir_path / config_file_relative_path;
 
         config_file_ptr = std::make_shared<YAML::Node>(YAML::LoadFile(config_file_path));
+        visualizer_config_ = VisualizerConfig::fromYaml(*config_file_ptr);
+        RCLCPP_INFO(this->get_logger(),
+            "Visualizer: %s, show_windows: %s",
+            visualizer_config_.enable ? "enabled" : "disabled",
+            visualizer_config_.show_windows ? "enabled" : "disabled");
         // 性能监控
         const bool performance_monitor_enabled =(*config_file_ptr)["performance_monitor_enabled"].as<bool>();
         const size_t performance_monitor_report_interval =(*config_file_ptr)["performance_monitor_report_interval"].as<size_t>();
@@ -257,6 +263,7 @@ private:
     std::chrono::steady_clock::time_point last_feed_dog_time;
     cv::Mat com_data_visualize_frame;
     bool com_data_visualize_frame_used = true;
+    VisualizerConfig visualizer_config_;
     std::shared_ptr<AutoAimPipeline> auto_aim_pipeline_;
 
     // Head IMU 通信状态
@@ -392,7 +399,7 @@ private:
 
     // 串口数据回调
     void serialDataCallback(const SerialData& msg) {
-        if (com_data_visualize_frame_used) {
+        if (visualizer_config_.enable && visualizer_config_.draw.com_data && com_data_visualize_frame_used) {
             const MCUDataFrame& odf = msg.origin_data_frame;
             com_data_visualize_frame.setTo(cv::Scalar(0, 0, 0));
             cv::putText(com_data_visualize_frame, 
@@ -562,7 +569,9 @@ private:
 
             AutoAimPipelineData::InitialData initial;
             initial.frame = std::move(frame);
-            initial.com_data_visualize_frame = com_data_visualize_frame.clone();
+            if (visualizer_config_.enable && visualizer_config_.draw.com_data) {
+                initial.com_data_visualize_frame = com_data_visualize_frame.clone();
+            }
             initial.frame_timestamp = now;
             initial.node_start_time = node_start_time;
             initial.performance_start_time = performance_start_time;
@@ -603,19 +612,25 @@ private:
 #endif
 
 #ifdef SHOW_WINDOWS
-        if (!result.valid_data.rmm_visualize_frame.empty()) {
+        if (visualizer_config_.enable && visualizer_config_.show_windows &&
+            !result.valid_data.rmm_visualize_frame.empty()) {
             cv::imshow("RMM visualize", result.valid_data.rmm_visualize_frame);
         }
-        if (!result.valid_data.common_debug_oscilloscope_frame.empty()) {
+        if (visualizer_config_.enable && visualizer_config_.show_windows &&
+            !result.valid_data.common_debug_oscilloscope_frame.empty()) {
             cv::imshow("Common Debug Oscilloscope", result.valid_data.common_debug_oscilloscope_frame);
         }
-        if (!result.valid_data.yaw_visualizer_frame.empty()) {
+        if (visualizer_config_.enable && visualizer_config_.show_windows &&
+            !result.valid_data.yaw_visualizer_frame.empty()) {
             cv::imshow("Yaw Visualizer", result.valid_data.yaw_visualizer_frame);
         }
-        if (!result.valid_data.display.empty()) {
+        if (visualizer_config_.enable && visualizer_config_.show_windows &&
+            !result.valid_data.display.empty()) {
             cv::imshow("Armor Detection", result.valid_data.display);
         }
-        cv::waitKey(1);
+        if (visualizer_config_.enable && visualizer_config_.show_windows) {
+            cv::waitKey(1);
+        }
 #endif
 
         if (std::chrono::steady_clock::now() - last_feed_dog_time >= std::chrono::seconds(3)) {
