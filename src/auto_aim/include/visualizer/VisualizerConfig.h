@@ -23,6 +23,7 @@ struct VisualizerConfig {
 
     bool enable = true;
     bool show_windows = true;
+    bool publish_topics = true;
     bool log_video = true;
     DrawConfig draw;
 
@@ -36,6 +37,7 @@ struct VisualizerConfig {
 
         config.enable = readBool(visualizer, "enable", config.enable);
         config.show_windows = readBool(visualizer, "show_windows", config.show_windows);
+        config.publish_topics = readBool(visualizer, "publish_topics", config.publish_topics);
         config.log_video = readBool(visualizer, "log_video", config.log_video);
 
         const YAML::Node draw = visualizer["draw"];

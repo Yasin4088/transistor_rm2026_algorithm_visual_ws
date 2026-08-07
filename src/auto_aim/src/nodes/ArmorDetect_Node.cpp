@@ -17,7 +17,10 @@
 #include <unistd.h>
 
 #include <opencv2/opencv.hpp>
+#include <cv_bridge/cv_bridge.h>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/header.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "2d_armor_detector/Params.h"
@@ -75,9 +78,10 @@ public:
         config_file_ptr = std::make_shared<YAML::Node>(YAML::LoadFile(config_file_path));
         visualizer_config_ = VisualizerConfig::fromYaml(*config_file_ptr);
         RCLCPP_INFO(this->get_logger(),
-            "Visualizer: %s, show_windows: %s",
+            "Visualizer: %s, show_windows: %s, publish_topics: %s",
             visualizer_config_.enable ? "enabled" : "disabled",
-            visualizer_config_.show_windows ? "enabled" : "disabled");
+            visualizer_config_.show_windows ? "enabled" : "disabled",
+            visualizer_config_.publish_topics ? "enabled" : "disabled");
         // 性能监控
         const bool performance_monitor_enabled =(*config_file_ptr)["performance_monitor_enabled"].as<bool>();
         const size_t performance_monitor_report_interval =(*config_file_ptr)["performance_monitor_report_interval"].as<size_t>();
@@ -148,6 +152,7 @@ public:
         }
 
         com_data_visualize_frame = cv::Mat::zeros(480, 640, CV_8UC3);
+        initVisualizerPublishers();
 
         // 算法流水线初始化
         auto_aim_pipeline_ = std::make_shared<AutoAimPipeline>(
@@ -264,6 +269,10 @@ private:
     cv::Mat com_data_visualize_frame;
     bool com_data_visualize_frame_used = true;
     VisualizerConfig visualizer_config_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr result_image_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr yaw_image_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rmm_image_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr cdo_image_pub_;
     std::shared_ptr<AutoAimPipeline> auto_aim_pipeline_;
 
     // Head IMU 通信状态
@@ -502,6 +511,50 @@ private:
     }
 
     // 图像投喂与结果处理
+    void initVisualizerPublishers() {
+        if (!visualizer_config_.enable || !visualizer_config_.publish_topics) {
+            return;
+        }
+
+        const auto qos = rclcpp::SensorDataQoS();
+        result_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+            "/auto_aim/visualizer/result", qos);
+        yaw_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+            "/auto_aim/visualizer/yaw", qos);
+        rmm_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+            "/auto_aim/visualizer/rmm", qos);
+        cdo_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
+            "/auto_aim/visualizer/common_debug_oscilloscope", qos);
+    }
+
+    void publishVisualizerImage(
+        const cv::Mat& image,
+        const rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& publisher,
+        const std::string& frame_id) {
+        if (!publisher || image.empty()) {
+            return;
+        }
+
+        std_msgs::msg::Header header;
+        header.stamp = this->now();
+        header.frame_id = frame_id;
+        publisher->publish(*cv_bridge::CvImage(header, "bgr8", image).toImageMsg());
+    }
+
+    void publishVisualizerFrames(const AutoAimPipeline::ValidData& valid_data) {
+        if (!visualizer_config_.enable || !visualizer_config_.publish_topics) {
+            return;
+        }
+
+        publishVisualizerImage(valid_data.display, result_image_pub_, "auto_aim_result");
+        publishVisualizerImage(valid_data.yaw_visualizer_frame, yaw_image_pub_, "auto_aim_yaw");
+        publishVisualizerImage(valid_data.rmm_visualize_frame, rmm_image_pub_, "auto_aim_rmm");
+        publishVisualizerImage(
+            valid_data.common_debug_oscilloscope_frame,
+            cdo_image_pub_,
+            "auto_aim_common_debug_oscilloscope");
+    }
+
     void processImage() {
         auto now = std::chrono::steady_clock::now();
 
@@ -611,27 +664,7 @@ private:
         }
 #endif
 
-#ifdef SHOW_WINDOWS
-        if (visualizer_config_.enable && visualizer_config_.show_windows &&
-            !result.valid_data.rmm_visualize_frame.empty()) {
-            cv::imshow("RMM visualize", result.valid_data.rmm_visualize_frame);
-        }
-        if (visualizer_config_.enable && visualizer_config_.show_windows &&
-            !result.valid_data.common_debug_oscilloscope_frame.empty()) {
-            cv::imshow("Common Debug Oscilloscope", result.valid_data.common_debug_oscilloscope_frame);
-        }
-        if (visualizer_config_.enable && visualizer_config_.show_windows &&
-            !result.valid_data.yaw_visualizer_frame.empty()) {
-            cv::imshow("Yaw Visualizer", result.valid_data.yaw_visualizer_frame);
-        }
-        if (visualizer_config_.enable && visualizer_config_.show_windows &&
-            !result.valid_data.display.empty()) {
-            cv::imshow("Armor Detection", result.valid_data.display);
-        }
-        if (visualizer_config_.enable && visualizer_config_.show_windows) {
-            cv::waitKey(1);
-        }
-#endif
+        publishVisualizerFrames(result.valid_data);
 
         if (std::chrono::steady_clock::now() - last_feed_dog_time >= std::chrono::seconds(3)) {
             watchdog_client->feed();

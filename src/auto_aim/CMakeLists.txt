@@ -106,6 +106,7 @@ add_library(armor_detector SHARED
 #)
 # 添加可执行文件
 add_executable(armor_detect_node src/nodes/ArmorDetect_Node.cpp)
+add_executable(auto_aim_visualizer_node src/nodes/AutoAimVisualizer_Node.cpp)
 #add_executable(com_node src/nodes/Com_Node_New.cpp)
 
 # 为装甲板检测器添加依赖
@@ -149,6 +150,14 @@ target_link_libraries(armor_detect_node
     openvino::runtime
 )
 
+target_link_libraries(auto_aim_visualizer_node
+    ${OpenCV_LIBS}
+    rclcpp::rclcpp
+    cv_bridge::cv_bridge
+    ${sensor_msgs_LIBRARIES}
+    yaml-cpp
+)
+
 # 为通信节点添加依赖
 #target_link_libraries(com_node
 #    crc_lib
@@ -160,6 +169,7 @@ target_link_libraries(armor_detect_node
 ament_target_dependencies(armor_detector yaml-cpp angles)
 
 ament_target_dependencies(armor_detect_node yaml-cpp)
+ament_target_dependencies(auto_aim_visualizer_node yaml-cpp)
 
 # 编译选项
 if(NOT CMAKE_BUILD_TYPE)
@@ -176,6 +186,7 @@ link_directories(/opt/MVS/lib/64)
 # 安装
 install(TARGETS
     armor_detect_node
+    auto_aim_visualizer_node
 #    com_node
     armor_detector  # 添加这行
 #    crc_lib        # 添加这行

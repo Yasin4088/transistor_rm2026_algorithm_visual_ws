@@ -30,6 +30,7 @@ RMM_visualize_zoom_out_factor : 10.0 # 平面可视化缩放系数，该值越�
 visualizer:
   enable: true
   show_windows: true
+  publish_topics: true
   log_video: true
   draw:
     main_result: true
