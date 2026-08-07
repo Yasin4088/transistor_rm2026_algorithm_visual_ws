@@ -2,7 +2,7 @@
 CLASSIFIER_SHM_KEY : 0x0250
 classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/model.xml"
 
-use_RP24_YOLO : false
+use_RP24_YOLO : true
 RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
 RP24_YOLO_device : "GPU"
 
@@ -28,27 +28,12 @@ RMM_visualize_zoom_out_factor : 10.0 # 平面可视化缩放系数，该值越�
 
 # 可视化设置
 visualizer:
-  enable: true
-  show_windows: true
-  publish_topics: true
-  log_video: true
-  draw:
-    main_result: true
-    status_text: true
-    rest_frame: true
-    ground_stable_point: true
-    aim_reference_point: true
-    lights: true
-    armors: true
-    solved_armors: true
-    predictions: true
-    yaw_curve: true
-    rmm: true
-    common_debug_oscilloscope: true
-    gimbal_coordinate: true
-    com_data: true
+  enable: true # 是否启用可视化
+  show_windows: true  # 是否显示窗口
+  publish_topics: true # 是否发布话题
+  log_video: true # 是否录制视频
 
-frame_rate : 80.0   # fps
+frame_rate : 90.0   # fps
 serial_delay_time : 30.0 # ms           电控传来的信息相对相机画面快的时间，将对电控信息再延迟这个时间以同步两者
 extra_predict_time : 0.170 # s          除了弹丸飞行时间以外的需要预测器补偿的总时间
 

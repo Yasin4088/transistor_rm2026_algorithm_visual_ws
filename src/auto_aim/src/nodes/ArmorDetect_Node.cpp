@@ -23,6 +23,11 @@
 #include <std_msgs/msg/header.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include "auto_aim/msg/debug_armor.hpp"
+#include "auto_aim/msg/debug_armor_result.hpp"
+#include "auto_aim/msg/debug_light.hpp"
+#include "auto_aim/msg/point2f.hpp"
+#include "auto_aim/msg/visualizer_debug_data.hpp"
 #include "2d_armor_detector/Params.h"
 #include "camera/Camera.h"
 #include "communication/Com.h"
@@ -269,8 +274,8 @@ private:
     cv::Mat com_data_visualize_frame;
     bool com_data_visualize_frame_used = true;
     VisualizerConfig visualizer_config_;
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr result_image_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr yaw_image_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr raw_frame_pub_;
+    rclcpp::Publisher<auto_aim::msg::VisualizerDebugData>::SharedPtr debug_data_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rmm_image_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr cdo_image_pub_;
     std::shared_ptr<AutoAimPipeline> auto_aim_pipeline_;
@@ -517,10 +522,10 @@ private:
         }
 
         const auto qos = rclcpp::SensorDataQoS();
-        result_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
-            "/auto_aim/visualizer/result", qos);
-        yaw_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
-            "/auto_aim/visualizer/yaw", qos);
+        raw_frame_pub_ = create_publisher<sensor_msgs::msg::Image>(
+            "/auto_aim/visualizer/raw_frame", qos);
+        debug_data_pub_ = create_publisher<auto_aim::msg::VisualizerDebugData>(
+            "/auto_aim/visualizer/debug_data", qos);
         rmm_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
             "/auto_aim/visualizer/rmm", qos);
         cdo_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
@@ -541,13 +546,96 @@ private:
         publisher->publish(*cv_bridge::CvImage(header, "bgr8", image).toImageMsg());
     }
 
+    auto_aim::msg::Point2f toMsgPoint(const cv::Point2f& point) const {
+        auto_aim::msg::Point2f msg;
+        msg.x = point.x;
+        msg.y = point.y;
+        return msg;
+    }
+
+    template <typename PointArray>
+    void fillPointArray(PointArray& out, const std::vector<cv::Point2f>& points) const {
+        for (size_t i = 0; i < out.size(); ++i) {
+            out[i] = i < points.size() ? toMsgPoint(points[i]) : auto_aim::msg::Point2f{};
+        }
+    }
+
+    auto_aim::msg::DebugArmor toMsgArmor(const Armor& armor) const {
+        auto_aim::msg::DebugArmor msg;
+        fillPointArray(msg.corners, armor.corners);
+        fillPointArray(msg.light_bar_corners, armor.light_bar_corners);
+        msg.confidence = armor.confidence;
+        return msg;
+    }
+
+    auto_aim::msg::DebugArmorResult toMsgArmorResult(const ArmorResult& result) const {
+        auto_aim::msg::DebugArmorResult msg;
+        fillPointArray(msg.corners, result.corners);
+        fillPointArray(msg.light_bar_corners, result.armor.light_bar_corners);
+        msg.center = toMsgPoint(result.center);
+        msg.center_predicted = toMsgPoint(result.center_predicted);
+        msg.number = result.number;
+        msg.confidence = result.confidence;
+        msg.is_tracked_now = result.is_tracked_now;
+        msg.predictions.reserve(result.predictions.size());
+        for (const auto& prediction : result.predictions) {
+            msg.predictions.emplace_back(toMsgPoint(prediction));
+        }
+        return msg;
+    }
+
+    void publishVisualizerDebugData(const AutoAimVisualizerDebugFrame& debug_frame) {
+        if (!debug_data_pub_ || debug_frame.frame.empty()) {
+            return;
+        }
+
+        auto_aim::msg::VisualizerDebugData msg;
+        msg.header.stamp = this->now();
+        msg.header.frame_id = "auto_aim_debug";
+        msg.bullet_velocity = debug_frame.bullet_velocity;
+        msg.enemy_color = debug_frame.enemy_color;
+        msg.pitch = debug_frame.pitch;
+        msg.yaw = debug_frame.yaw;
+        msg.roll = debug_frame.roll;
+        msg.mcu_command_yaw = debug_frame.mcu_command_yaw;
+        msg.armor_type = static_cast<uint8_t>(debug_frame.armor_type);
+        msg.predictor_type = static_cast<uint8_t>(debug_frame.predictor_type);
+        msg.ground_stable_point = toMsgPoint(debug_frame.ground_stable_point);
+
+        msg.lights.reserve(debug_frame.lights.size());
+        for (const auto& light : debug_frame.lights) {
+            auto_aim::msg::DebugLight light_msg;
+            cv::Point2f vertices[4];
+            light.el.points(vertices);
+            for (size_t i = 0; i < light_msg.vertices.size(); ++i) {
+                light_msg.vertices[i] = toMsgPoint(vertices[i]);
+            }
+            msg.lights.emplace_back(std::move(light_msg));
+        }
+
+        msg.armors.reserve(debug_frame.armors.size());
+        for (const auto& armor : debug_frame.armors) {
+            msg.armors.emplace_back(toMsgArmor(armor));
+        }
+
+        msg.solved_results.reserve(debug_frame.solved_results.size());
+        for (const auto& solved_result : debug_frame.solved_results) {
+            msg.solved_results.emplace_back(toMsgArmorResult(solved_result));
+        }
+
+        debug_data_pub_->publish(msg);
+    }
+
     void publishVisualizerFrames(const AutoAimPipeline::ValidData& valid_data) {
         if (!visualizer_config_.enable || !visualizer_config_.publish_topics) {
             return;
         }
 
-        publishVisualizerImage(valid_data.display, result_image_pub_, "auto_aim_result");
-        publishVisualizerImage(valid_data.yaw_visualizer_frame, yaw_image_pub_, "auto_aim_yaw");
+        publishVisualizerImage(
+            valid_data.visualizer_debug_frame.frame,
+            raw_frame_pub_,
+            "auto_aim_raw_frame");
+        publishVisualizerDebugData(valid_data.visualizer_debug_frame);
         publishVisualizerImage(valid_data.rmm_visualize_frame, rmm_image_pub_, "auto_aim_rmm");
         publishVisualizerImage(
             valid_data.common_debug_oscilloscope_frame,

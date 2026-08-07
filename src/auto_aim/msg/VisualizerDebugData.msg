@@ -1,0 +1,13 @@
+std_msgs/Header header
+float32 bullet_velocity
+string enemy_color
+float32 pitch
+float32 yaw
+float32 roll
+float32 mcu_command_yaw
+uint8 armor_type
+uint8 predictor_type
+Point2f ground_stable_point
+DebugLight[] lights
+DebugArmor[] armors
+DebugArmorResult[] solved_results

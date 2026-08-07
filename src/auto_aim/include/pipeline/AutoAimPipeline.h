@@ -1,4 +1,4 @@
-#pragma once //防止重复包含
+#pragma once
 
 #include <atomic>
 #include <chrono>
@@ -19,6 +19,7 @@
 #include "2d_armor_detector/Armor.h"
 #include "2d_armor_detector/ArmorClassifier.h"
 #include "2d_armor_detector/ArmorDetector.h"
+#include "2d_armor_detector/LightBar.h"
 #include "2d_armor_detector/LightBarDetector.h"
 #include "3d_processing/ArmorSolver.h"
 #include "3d_processing/BallisticSolver.h"
@@ -28,7 +29,26 @@
 #include "predictor/PredictorMain.h"
 #include "utils/FrameRateCounter.h"
 #include "utils/PerformanceMonitor.h"
-#include "visualizer/AutoAimVisualizer.h"
+#include "visualizer/VisualizerConfig.h"
+
+struct AutoAimVisualizerDebugFrame {
+    cv::Mat frame;
+    std::chrono::steady_clock::time_point node_start_time;
+
+    float bullet_velocity = 0.0f;
+    std::string enemy_color;
+    float pitch = 0.0f;
+    float yaw = 0.0f;
+    float roll = 0.0f;
+    cv::Point2f ground_stable_point;
+
+    std::vector<Light> lights;
+    std::vector<Armor> armors;
+    std::vector<ArmorResult> solved_results;
+    ArmorType::ArmorType armor_type = ArmorType::Hero;
+    PredictorType::PredictorType predictor_type = PredictorType::None;
+    float mcu_command_yaw = 0.0f;
+};
 
 struct AutoAimPipelineData {
     struct InitialData {
@@ -79,6 +99,7 @@ struct AutoAimPipelineData {
         cv::Mat yaw_visualizer_frame;
         cv::Mat rmm_visualize_frame;
         cv::Mat common_debug_oscilloscope_frame;
+        AutoAimVisualizerDebugFrame visualizer_debug_frame;
         size_t armor_count = 0;
         bool request_com_frame_refresh = false;
     } stage4;
@@ -103,6 +124,7 @@ public:
         cv::Mat yaw_visualizer_frame;
         cv::Mat rmm_visualize_frame;
         cv::Mat common_debug_oscilloscope_frame;
+        AutoAimVisualizerDebugFrame visualizer_debug_frame;
         size_t armor_count = 0;
         bool request_com_frame_refresh = false;
     };
@@ -210,7 +232,6 @@ private:
     } stage3_;
 
     struct Stage4 {
-        std::shared_ptr<AutoAimVisualizer> visualizer;
         std::shared_ptr<TwoVideoLogger> two_video_logger;
         VisualizerConfig visualizer_config;
 

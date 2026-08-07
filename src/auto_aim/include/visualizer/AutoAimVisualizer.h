@@ -38,6 +38,9 @@ struct AutoAimVisualizerInput {
     const std::vector<Armor>* armors = nullptr;
     const std::vector<ArmorResult>* solved_results = nullptr;
     const PredictorResult* predictor_result = nullptr;
+    bool has_predictor_state = false;
+    ArmorType::ArmorType armor_type = ArmorType::Hero;
+    PredictorType::PredictorType predictor_type = PredictorType::None;
     float mcu_command_yaw = 0.0f;
 };
 

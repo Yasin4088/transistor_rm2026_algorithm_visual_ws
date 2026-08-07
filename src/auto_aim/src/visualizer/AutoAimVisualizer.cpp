@@ -97,12 +97,16 @@ void AutoAimVisualizer::drawStatusText(cv::Mat& image, const AutoAimVisualizerIn
         8,
         false);
 
-    if (input.predictor_result) {
+    if (input.predictor_result || input.has_predictor_state) {
+        const ArmorType::ArmorType armor_type =
+            input.predictor_result ? input.predictor_result->armor_type : input.armor_type;
+        const PredictorType::PredictorType predictor_type =
+            input.predictor_result ? input.predictor_result->predictor_type : input.predictor_type;
         cv::putText(image,
             "aiming " +
-                ArmorType::ArmorTypeStrings[input.predictor_result->armor_type] +
+                ArmorType::ArmorTypeStrings[armor_type] +
                 ": " +
-                PredictorType::PredictorTypeStrings[input.predictor_result->predictor_type],
+                PredictorType::PredictorTypeStrings[predictor_type],
             cv::Point2f(20, 110),
             cv::FONT_HERSHEY_COMPLEX,
             0.7,

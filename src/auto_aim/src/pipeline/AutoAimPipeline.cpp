@@ -309,8 +309,8 @@ AutoAimPipeline::Stage4::Stage4(std::shared_ptr<YAML::Node> config_file_ptr,
                                 rclcpp::Node* node,
                                 const std::filesystem::path& workspace_path)
 {
-    visualizer = std::make_shared<AutoAimVisualizer>(config_file_ptr, node);
-    visualizer_config = visualizer->config();
+    (void)node;
+    visualizer_config = VisualizerConfig::fromYaml(*config_file_ptr);
 #if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
     if (visualizer_config.enable && visualizer_config.log_video) {
         two_video_logger = std::make_shared<TwoVideoLogger>(workspace_path / "VideoLog");
@@ -348,40 +348,37 @@ void AutoAimPipeline::Stage4::run()
 
         const auto stage_start_time = PerfClock::now();
         d->stage4 = AutoAimPipelineData::Stage4Data{};
-        AutoAimVisualizerInput visualizer_input;
-        visualizer_input.frame = &d->initial.frame;
-        visualizer_input.node_start_time = d->initial.node_start_time;
-        visualizer_input.bullet_velocity = d->initial.bullet_velocity;
-        visualizer_input.enemy_color = d->initial.enemy_color;
-        visualizer_input.pitch = d->initial.pitch;
-        visualizer_input.yaw = d->initial.yaw;
-        visualizer_input.roll = d->initial.roll;
-        visualizer_input.ground_stable_point = d->initial.ground_stable_point;
-        visualizer_input.use_head_imu = d->initial.use_head_imu;
-        visualizer_input.to_mcu_delta_yaw = d->initial.to_mcu_delta_yaw;
-        visualizer_input.to_mcu_delta_pitch = d->initial.to_mcu_delta_pitch;
-        visualizer_input.lights = &d->stage1.lights;
-        visualizer_input.armors = &d->stage1.armors;
-        visualizer_input.solved_results = &d->stage2.solved_results;
-        visualizer_input.predictor_result = &d->stage3.predictor_result;
-        visualizer_input.mcu_command_yaw = d->stage3.mcu_command_yaw;
-
-        AutoAimVisualizerOutput visualizer_output = visualizer->render(visualizer_input);
-
-        d->stage4.display = std::move(visualizer_output.display);
-        d->stage4.yaw_visualizer_frame = std::move(visualizer_output.yaw_visualizer_frame);
-        d->stage4.rmm_visualize_frame = std::move(visualizer_output.rmm_visualize_frame);
+        d->stage4.rmm_visualize_frame =
+            d->stage3.predictor_result.info_images.RMM_visualize_frame;
         d->stage4.common_debug_oscilloscope_frame =
-            std::move(visualizer_output.common_debug_oscilloscope_frame);
-        d->stage4.armor_count = visualizer_output.armor_count;
+            d->stage3.predictor_result.info_images.common_debug_oscilloscope_frame;
+        d->stage4.armor_count = d->stage2.solved_results.size();
+
+        if (visualizer_config.enable && visualizer_config.publish_topics) {
+            AutoAimVisualizerDebugFrame debug_frame;
+            debug_frame.frame = d->initial.frame.clone();
+            debug_frame.node_start_time = d->initial.node_start_time;
+            debug_frame.bullet_velocity = d->initial.bullet_velocity;
+            debug_frame.enemy_color = d->initial.enemy_color;
+            debug_frame.pitch = d->initial.pitch;
+            debug_frame.yaw = d->initial.yaw;
+            debug_frame.roll = d->initial.roll;
+            debug_frame.ground_stable_point = d->initial.ground_stable_point;
+            debug_frame.lights = d->stage1.lights;
+            debug_frame.armors = d->stage1.armors;
+            debug_frame.solved_results = d->stage2.solved_results;
+            debug_frame.armor_type = d->stage3.predictor_result.armor_type;
+            debug_frame.predictor_type = d->stage3.predictor_result.predictor_type;
+            debug_frame.mcu_command_yaw = d->stage3.mcu_command_yaw;
+            d->stage4.visualizer_debug_frame = std::move(debug_frame);
+        }
 
 #if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
         if (two_video_logger) {
             two_video_logger->updateOriginFrame(d->initial.frame);
-            two_video_logger->updateDrewFrame(d->stage4.display);
+            two_video_logger->updateDrewFrame(d->initial.frame);
             two_video_logger->updateRMMFrame(d->stage4.rmm_visualize_frame);
             two_video_logger->updateCDOFrame(d->stage4.common_debug_oscilloscope_frame);
-            two_video_logger->updateYawFrame(d->stage4.yaw_visualizer_frame);
             if (visualizer_config.draw.com_data) {
                 two_video_logger->updateComFrame(d->initial.com_data_visualize_frame);
             }
@@ -506,6 +503,7 @@ AutoAimPipeline::tryPopResult(const std::chrono::steady_clock::time_point& times
         result.valid_data.rmm_visualize_frame = std::move(front->stage4.rmm_visualize_frame);
         result.valid_data.common_debug_oscilloscope_frame =
             std::move(front->stage4.common_debug_oscilloscope_frame);
+        result.valid_data.visualizer_debug_frame = std::move(front->stage4.visualizer_debug_frame);
         result.valid_data.armor_count = front->stage4.armor_count;
         result.valid_data.request_com_frame_refresh = front->stage4.request_com_frame_refresh;
         result.valid = true;
