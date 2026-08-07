@@ -26,9 +26,14 @@ images_relative_path : "InputImages"                    # 使用图片输入时�
 
 RMM_visualize_zoom_out_factor : 10.0 # 平面可视化缩放系数，该值越大视野范围越大
 
-frame_rate : 30.0   # fps
+frame_rate : 80.0   # fps
 serial_delay_time : 30.0 # ms           电控传来的信息相对相机画面快的时间，将对电控信息再延迟这个时间以同步两者
 extra_predict_time : 0.170 # s          除了弹丸飞行时间以外的需要预测器补偿的总时间
+
+# 自瞄流水线耗时统计
+performance_monitor_enabled : true
+performance_monitor_report_interval : 90 # 累计多少帧输出一次平均耗时
+
 
 pre_predict_time_not_aim : 500.0 # ms 在看到目标的这段时间内不启动自瞄，防止因电控云台角度信息延迟而震荡
 pre_predict_time : 2000.0 # ms 在看到目标的这段时间内自瞄直接瞄准当前装甲板位置，不使用预测器预测的位置，待有足够观测值后再使用预测值

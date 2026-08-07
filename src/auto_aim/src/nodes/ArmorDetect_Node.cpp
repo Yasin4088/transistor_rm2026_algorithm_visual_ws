@@ -29,6 +29,7 @@
 #include "other_input/ImagesInput.h"
 #include "other_input/VideoInput.h"
 #include "pipeline/AutoAimPipeline.h"
+#include "utils/PerformanceMonitor.h"
 
 namespace fs = std::filesystem;
 
@@ -71,6 +72,16 @@ public:
         fs::path config_file_path = ws_dir_path / config_file_relative_path;
 
         config_file_ptr = std::make_shared<YAML::Node>(YAML::LoadFile(config_file_path));
+        // 性能监控
+        const bool performance_monitor_enabled =(*config_file_ptr)["performance_monitor_enabled"].as<bool>();
+        const size_t performance_monitor_report_interval =(*config_file_ptr)["performance_monitor_report_interval"].as<size_t>();
+        performance_monitor_ = std::make_shared<PerformanceMonitor>(
+            performance_monitor_enabled,
+            performance_monitor_report_interval);
+        RCLCPP_INFO(this->get_logger(),
+            "Performance monitor: %s, report_interval: %zu frames",
+            performance_monitor_enabled ? "enabled" : "disabled",
+            performance_monitor_report_interval);
 
         // 参数初始化
         // 初始化敌方颜色
@@ -104,8 +115,8 @@ public:
         // 自瞄参数初始化
         // 根据相机内参自动提取
         const YAML::Node& camera_matrix_Node = (*config_file_ptr)["camera_matrix"];
-        yaw_rad_to_x_pixel_ratio = camera_matrix_Node[0][0].as<float>(); 
-        pitch_rad_to_y_pixel_ratio = camera_matrix_Node[1][1].as<float>(); 
+        yaw_rad_to_x_pixel_ratio = camera_matrix_Node[0][0].as<float>();
+        pitch_rad_to_y_pixel_ratio = camera_matrix_Node[1][1].as<float>();
 
         params_.min_light_height = (*config_file_ptr)["min_light_height"].as<int>();
         params_.light_min_area = (*config_file_ptr)["light_min_area"].as<int>();
@@ -113,7 +124,7 @@ public:
         params_.max_light_wh_ratio = (*config_file_ptr)["max_light_wh_ratio"].as<float>();
         params_.min_light_wh_ratio = (*config_file_ptr)["min_light_wh_ratio"].as<float>();
         params_.light_max_tilt_angle = (*config_file_ptr)["light_max_tilt_angle"].as<float>();
-        
+
         frame_rate_ = (*config_file_ptr)["frame_rate"].as<float>();
         serial_delay_time = (*config_file_ptr)["serial_delay_time"].as<float>();
 
@@ -137,7 +148,8 @@ public:
             config_file_ptr,
             this,
             ws_dir_path,
-            node_start_time);
+            node_start_time,
+            performance_monitor_);
 
         // 串口与后台任务初始化
         DelayInfos init_serial_infos;
@@ -241,6 +253,7 @@ private:
     // 外设、可视化与流水线
     std::shared_ptr<SerialCommunicationClass> serial_communication_;
     std::shared_ptr<WatchdogClient> watchdog_client;
+    std::shared_ptr<PerformanceMonitor> performance_monitor_;
     std::chrono::steady_clock::time_point last_feed_dog_time;
     cv::Mat com_data_visualize_frame;
     bool com_data_visualize_frame_used = true;
@@ -512,6 +525,7 @@ private:
         RCLCPP_DEBUG(this->get_logger(), "ground_stable_point: %.2f %.2f",
             ground_stable_point.x, ground_stable_point.y);
 
+        const auto performance_start_time = std::chrono::steady_clock::now();
         cv::Mat frame;
 #if defined(USE_VIDEO) || defined(USE_IMAGES) || defined(SYNC_CAMERA_FPS)
         while (image_used) {
@@ -551,6 +565,7 @@ private:
             initial.com_data_visualize_frame = com_data_visualize_frame.clone();
             initial.frame_timestamp = now;
             initial.node_start_time = node_start_time;
+            initial.performance_start_time = performance_start_time;
             initial.bullet_velocity = bullet_velocity_;
             initial.enemy_color = enemy_color_;
             initial.pitch = last_pitch_rad_delayed_;

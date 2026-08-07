@@ -106,6 +106,7 @@ void AutoAimPipeline::Stage1::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage1 = AutoAimPipelineData::Stage1Data{};
         d->stage1.used_yolo = use_rp24_yolo;
 
@@ -133,6 +134,10 @@ void AutoAimPipeline::Stage1::run()
                     d->initial.ground_stable_point);
         }
 
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage1_2d_detect_classify"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -177,6 +182,7 @@ void AutoAimPipeline::Stage2::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage2 = AutoAimPipelineData::Stage2Data{};
         rest_frame->updateCamOrientation(
             d->initial.yaw,
@@ -196,6 +202,10 @@ void AutoAimPipeline::Stage2::run()
         }
         d->stage2.valid_count = d->stage2.solved_results.size();
 
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage2_3d_solve_transform"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -250,6 +260,7 @@ void AutoAimPipeline::Stage3::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage3 = AutoAimPipelineData::Stage3Data{};
         rest_frame->updateCamOrientation(
             d->initial.yaw,
@@ -280,6 +291,10 @@ void AutoAimPipeline::Stage3::run()
         }
         d->stage3.should_send_reset = d->stage3.predictor_result.reset;
 
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage3_predict_command"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -334,6 +349,7 @@ void AutoAimPipeline::Stage4::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage4 = AutoAimPipelineData::Stage4Data{};
         rest_frame->updateCamOrientation(
             d->initial.yaw,
@@ -442,6 +458,10 @@ void AutoAimPipeline::Stage4::run()
 #endif
 
         d->stage4.display = std::move(display);
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage4_visualize_log"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -516,10 +536,12 @@ AutoAimPipeline::AutoAimPipeline(std::shared_ptr<YAML::Node> config_file_ptr,
                                  rclcpp::Node* node,
                                  const std::filesystem::path& workspace_path,
                                  std::chrono::steady_clock::time_point node_start_time,
+                                 std::shared_ptr<PerformanceMonitor> performance_monitor,
                                  int max_queue_size,
                                  float max_delay_seconds)
     : max_queue_size_(max_queue_size)
     , max_delay_seconds_(max_delay_seconds)
+    , performance_monitor_(std::move(performance_monitor))
     , stage1_(config_file_ptr, node, workspace_path)
     , stage2_(config_file_ptr, node)
     , stage3_(config_file_ptr, node, node_start_time)
@@ -572,6 +594,15 @@ void AutoAimPipeline::addFrame(AutoAimPipelineData::InitialData initial)
 {
     auto data = std::make_unique<AutoAimPipelineData>();
     data->initial = std::move(initial);
+    if (data->initial.performance_start_time == std::chrono::steady_clock::time_point{}) {
+        data->initial.performance_start_time = PerfClock::now();
+    }
+    if (performance_monitor_ && performance_monitor_->enabled()) {
+        data->initial.performance_profile = std::make_shared<FrameProfile>(
+            performance_monitor_->beginFrame(
+                performance_frame_id_++,
+                data->initial.performance_start_time));
+    }
 
     std::lock_guard<std::mutex> lock(input_mtx_);
     if (scheduler_exit_.load()) return;
@@ -671,6 +702,9 @@ void AutoAimPipeline::schedulerLoop()
 
         if (stage4_.isIdle()) {
             if (in_flight_[3]) {
+                if (performance_monitor_ && in_flight_[3]->initial.performance_profile) {
+                    performance_monitor_->endFrame(*in_flight_[3]->initial.performance_profile);
+                }
                 std::lock_guard<std::mutex> lk(output_mtx_);
                 output_queue_.push_back(std::move(in_flight_[3]));
             }

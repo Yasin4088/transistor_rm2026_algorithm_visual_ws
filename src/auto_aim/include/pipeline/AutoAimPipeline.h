@@ -27,6 +27,7 @@
 #include "logger/TwoVideoLogger.h"
 #include "predictor/PredictorMain.h"
 #include "utils/FrameRateCounter.h"
+#include "utils/PerformanceMonitor.h"
 #include "visualizer/YawVisualizer.h"
 
 struct AutoAimPipelineData {
@@ -35,6 +36,8 @@ struct AutoAimPipelineData {
         cv::Mat com_data_visualize_frame;
         std::chrono::steady_clock::time_point frame_timestamp;
         std::chrono::steady_clock::time_point node_start_time;
+        std::chrono::steady_clock::time_point performance_start_time;
+        std::shared_ptr<FrameProfile> performance_profile;
 
         float bullet_velocity = 0.0f;
         std::string enemy_color;
@@ -114,6 +117,7 @@ public:
                     rclcpp::Node* node,
                     const std::filesystem::path& workspace_path,
                     std::chrono::steady_clock::time_point node_start_time,
+                    std::shared_ptr<PerformanceMonitor> performance_monitor = nullptr,
                     int max_queue_size = 4,
                     float max_delay_seconds = 0.0f);
     ~AutoAimPipeline();
@@ -128,6 +132,8 @@ private:
 
     int max_queue_size_;
     float max_delay_seconds_;
+    std::shared_ptr<PerformanceMonitor> performance_monitor_;
+    uint64_t performance_frame_id_ = 0;
 
     std::deque<std::unique_ptr<AutoAimPipelineData>> input_queue_;
     std::mutex input_mtx_;
