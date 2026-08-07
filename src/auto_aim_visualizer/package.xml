@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>auto_aim_visualizer</name>
+  <version>0.0.1</version>
+  <description>Standalone visualizer node for auto aim debug topics</description>
+
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>auto_aim</depend>
+  <depend>libyaml_cpp_dev</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

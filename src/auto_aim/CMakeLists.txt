@@ -79,10 +79,7 @@ add_library(armor_detector SHARED
     src/predictor/PredictorSwitcher.cpp
     src/predictor/PredictorMain.cpp
     # src/predictor/RotationJudge.cpp
-    src/visualizer/AutoAimVisualizer.cpp
     src/visualizer/DataVisualizer.cpp
-    src/visualizer/RestFrameDraw.cpp
-    src/visualizer/YawVisualizer.cpp
     src/communication/SharedMemoryClassifier.cpp
     # src/communication/SharedMemoryYOLOPose.cpp
     src/communication/Com.cpp
@@ -111,22 +108,6 @@ add_library(armor_detector SHARED
 #)
 # 添加可执行文件
 add_executable(armor_detect_node src/nodes/ArmorDetect_Node.cpp)
-add_executable(auto_aim_visualizer_node
-    src/nodes/AutoAimVisualizer_Node.cpp
-    src/visualizer/AutoAimVisualizer.cpp
-    src/visualizer/DataVisualizer.cpp
-    src/visualizer/RestFrameDraw.cpp
-    src/visualizer/YawVisualizer.cpp
-    src/utils/FrameRateCounter.cpp
-    src/3d_processing/ArmorSolver.cpp
-    src/3d_processing/RestFrame.cpp
-    src/2d_armor_detector/Armor.cpp
-    src/2d_armor_detector/LightBarDetector.cpp
-    src/predictor/PredictorSwitcher.cpp
-    src/ba_solver/ba_solver.cpp
-    src/ba_solver/graph_optimizer.cpp
-    src/ba_solver/utils.cpp
-)
 #add_executable(com_node src/nodes/Com_Node_New.cpp)
 
 # 为装甲板检测器添加依赖
@@ -170,26 +151,6 @@ target_link_libraries(armor_detect_node
     openvino::runtime
 )
 
-target_link_libraries(auto_aim_visualizer_node
-    ${OpenCV_LIBS}
-    Eigen3::Eigen
-    rclcpp::rclcpp
-    cv_bridge::cv_bridge
-    ${sensor_msgs_LIBRARIES}
-    "${cpp_typesupport_target}"
-    yaml-cpp
-    g2o_core
-    g2o_stuff
-    g2o_solver_csparse
-    g2o_csparse_extension
-    g2o_types_slam3d
-    g2o_types_sba
-    g2o_solver_dense
-    cxsparse
-    Sophus::Sophus
-    fmt::fmt
-)
-
 # 为通信节点添加依赖
 #target_link_libraries(com_node
 #    crc_lib
@@ -201,7 +162,6 @@ target_link_libraries(auto_aim_visualizer_node
 ament_target_dependencies(armor_detector yaml-cpp angles)
 
 ament_target_dependencies(armor_detect_node yaml-cpp)
-ament_target_dependencies(auto_aim_visualizer_node yaml-cpp)
 
 # 编译选项
 if(NOT CMAKE_BUILD_TYPE)
@@ -218,7 +178,6 @@ link_directories(/opt/MVS/lib/64)
 # 安装
 install(TARGETS
     armor_detect_node
-    auto_aim_visualizer_node
 #    com_node
     armor_detector  # 添加这行
 #    crc_lib        # 添加这行

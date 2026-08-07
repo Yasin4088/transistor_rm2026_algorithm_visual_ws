@@ -29,7 +29,7 @@
 #include "predictor/PredictorMain.h"
 #include "utils/FrameRateCounter.h"
 #include "utils/PerformanceMonitor.h"
-#include "visualizer/VisualizerConfig.h"
+#include "utils/VisualizerConfig.h"
 
 struct AutoAimVisualizerDebugFrame {
     cv::Mat frame;

@@ -37,7 +37,7 @@ def generate_launch_description():
             #arguments = ['--ros-args', '--log-level', 'DEBUG']
         ),
         Node(
-            package='auto_aim',
+            package='auto_aim_visualizer',
             executable='auto_aim_visualizer_node',
             name='auto_aim_visualizer_node',
             output='screen',

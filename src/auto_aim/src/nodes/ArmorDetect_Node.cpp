@@ -38,7 +38,7 @@
 #include "other_input/VideoInput.h"
 #include "pipeline/AutoAimPipeline.h"
 #include "utils/PerformanceMonitor.h"
-#include "visualizer/VisualizerConfig.h"
+#include "utils/VisualizerConfig.h"
 
 namespace fs = std::filesystem;
 
