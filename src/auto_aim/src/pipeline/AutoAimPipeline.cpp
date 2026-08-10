@@ -211,10 +211,12 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
             done_.push_back(std::move(dd));
         }
         std::cerr << "[diag] finishFrame: drops done" << std::endl;
-        in_flight_.erase(in_flight_.begin(), it);
-
         latency_ms = std::chrono::duration<double, std::milli>(now - it->submitted).count();
         d = std::move(it->data);
+
+        // 关键修复：结果帧的条目也要一并移除（否则它带着空 data 留在 in_flight_，
+        // 下一次 drop 循环对空指针解引用会段错误）
+        in_flight_.erase(in_flight_.begin(), it + 1);
     }
     std::cerr << "[diag] finishFrame: unlocked latency=" << latency_ms
               << " armors=" << res.armors.size() << std::endl;
