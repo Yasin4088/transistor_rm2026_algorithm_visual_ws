@@ -51,6 +51,7 @@ class SerialCommunicationClass {
 public:
     SerialCommunicationClass(rclcpp::Node* node, std::function<void(const SerialData&)> serialDataCallback);
     ~SerialCommunicationClass();
+    void stop();   // 停止通信线程（running=false），避免析构时手动调 ~ 造成双重析构
     void timerCallback();
     bool sendData(float pitch_target, float yaw_target, bool fire = true);
     void timerThread();

@@ -192,14 +192,11 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
 {
     std::unique_ptr<AutoAimPipelineData> d;
     double latency_ms = 0.0;
-    std::cerr << "[diag] finishFrame: enter user_data=" << res.user_data
-              << " in_flight=" << in_flight_.size() << std::endl;
     {
         std::lock_guard<std::mutex> lock(mtx);
         auto it = std::find_if(in_flight_.begin(), in_flight_.end(),
             [&](const InFlight& pf) { return pf.data.get() == res.user_data; });
         if (it == in_flight_.end()) {
-            std::cerr << "[diag] finishFrame: not found, return" << std::endl;
             return;  // 已被处理（不应发生）
         }
 
@@ -210,7 +207,6 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
             dd->stage1.used_yolo = true;
             done_.push_back(std::move(dd));
         }
-        std::cerr << "[diag] finishFrame: drops done" << std::endl;
         latency_ms = std::chrono::duration<double, std::milli>(now - it->submitted).count();
         d = std::move(it->data);
 
@@ -218,8 +214,6 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
         // 下一次 drop 循环对空指针解引用会段错误）
         in_flight_.erase(in_flight_.begin(), it + 1);
     }
-    std::cerr << "[diag] finishFrame: unlocked latency=" << latency_ms
-              << " armors=" << res.armors.size() << std::endl;
 
     rp24_yolo_wrapper->reportFrameLatency(latency_ms);
 
@@ -230,16 +224,13 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
         d->stage1.lights.emplace_back(armor.leftLight);
         d->stage1.lights.emplace_back(armor.rightLight);
     }
-    std::cerr << "[diag] finishFrame: stage1 armors filled" << std::endl;
     d->stage1.classify_results = rp24_yolo_wrapper->classifyAndTrack(
         d->stage1.armors, res.rp24_classes, d->initial.ground_stable_point);
-    std::cerr << "[diag] finishFrame: classified" << std::endl;
 
     {
         std::lock_guard<std::mutex> lock(mtx);
         done_.push_back(std::move(d));
     }
-    std::cerr << "[diag] finishFrame: done pushed" << std::endl;
 }
 
 void AutoAimPipeline::Stage1::flushAll()

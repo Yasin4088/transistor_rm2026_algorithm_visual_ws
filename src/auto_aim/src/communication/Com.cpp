@@ -51,6 +51,13 @@ SerialCommunicationClass::~SerialCommunicationClass() {
     }
 }
 
+void SerialCommunicationClass::stop() {
+    running = false;
+    if (fd_ >= 0) {
+        close(fd_);
+    }
+}
+
 void SerialCommunicationClass::tryReconnect() {
     if (fd_ >= 0) {
         close(fd_);

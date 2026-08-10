@@ -187,9 +187,9 @@ public:
         // 退出主循环与视频取流线程
         g_bExit = true;
         // 停止两个串口通信线程（running = false）
-        serial_communication_->~SerialCommunicationClass();
+        serial_communication_->stop();
         std::cerr << "[diag] node dtor: serial stopped" << std::endl;
-        headIMUInfos.headIMU_communication_->~HeadIMUSerialCommunicationClass();
+        headIMUInfos.headIMU_communication_->stop();
         std::cerr << "[diag] node dtor: imu stopped" << std::endl;
         // join 所有 std::thread 成员，避免析构时 terminate
         if (com_timer_thread_.joinable()) com_timer_thread_.join();

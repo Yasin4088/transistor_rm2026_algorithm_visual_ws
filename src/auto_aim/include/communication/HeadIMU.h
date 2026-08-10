@@ -56,6 +56,7 @@ class HeadIMUSerialCommunicationClass {
 public:
     HeadIMUSerialCommunicationClass(std::function<void(const HeadIMUSerialData&)> serialDataCallback);
     ~HeadIMUSerialCommunicationClass();
+    void stop();   // 停止通信线程（running=false），避免析构时手动调 ~ 造成双重析构
     void timerCallback();
     void timerThread();
     
