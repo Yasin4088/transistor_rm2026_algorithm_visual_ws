@@ -1,3 +1,6 @@
+#ifndef RP24_YOLO_WRAPPER_H
+#define RP24_YOLO_WRAPPER_H
+
 #include "RP24_YOLO/OpenvinoInfer.h"
 #include "memory"
 #include "2d_armor_detector/Armor.h"
@@ -175,3 +178,5 @@ private:
     bool big_map[9] = {false, true, false, false, false, false, false, false, true};
     std::shared_ptr<ArmorTracker> armor_tracker;
 };
+
+#endif  // RP24_YOLO_WRAPPER_H
