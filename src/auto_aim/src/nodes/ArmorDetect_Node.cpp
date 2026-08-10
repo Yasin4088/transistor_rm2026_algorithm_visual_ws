@@ -68,17 +68,14 @@ public:
         std::string full_path_str = full_path.string(); //转换为字符串，便于查找
 
         // 获取工作空间路径
-        // 从可执行文件路径向上查找工作空间根目录（含 src/shared_files/config.yaml 的目录）
-        fs::path ws_dir_path = full_path.parent_path();
-        while (!ws_dir_path.empty() &&
-               !fs::exists(ws_dir_path / "src" / "shared_files" / "config.yaml")) {
-            ws_dir_path = ws_dir_path.parent_path();
-        }
-        if (ws_dir_path.empty() ||
-            !fs::exists(ws_dir_path / "src" / "shared_files" / "config.yaml")) {
+        // 可执行文件路径形如 <ws>/install/<pkg>/lib/<pkg>/<node>，
+        // 工作区根 = 路径中 "/install/" 之前的部分（不依赖目录名，不会找错别的副本）
+        size_t install_pos = full_path_str.find("/install/");
+        if (install_pos == std::string::npos) {
             std::cerr << "Error: Workspace directory not found in path" << std::endl;
             return;
         }
+        fs::path ws_dir_path = full_path_str.substr(0, install_pos);
 
         // 获取配置文件路径并加载
         const std::string config_file_relative_path = "src/shared_files/config.yaml";
