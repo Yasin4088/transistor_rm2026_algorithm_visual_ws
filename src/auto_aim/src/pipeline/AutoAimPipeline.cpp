@@ -139,32 +139,41 @@ void AutoAimPipeline::Stage1::runAsync()
 {
     while (true) {
         std::unique_ptr<AutoAimPipelineData> d;
+        bool got_input = false;
         {
             std::unique_lock<std::mutex> lock(mtx);
-            cv.wait(lock, [this]() { return !inbox_.empty() || exit_flag; });
+            // 带超时等待：即使没有新输入也要定期醒来取回结果，
+            // 否则 4 帧在飞后调度器不再喂帧，结果会一直积压导致流水线冻结
+            cv.wait_for(lock, std::chrono::milliseconds(5),
+                        [this]() { return !inbox_.empty() || exit_flag; });
             if (exit_flag) {
                 flushAll();
                 return;
             }
-            d = std::move(inbox_.front());
-            inbox_.pop_front();
+            if (!inbox_.empty()) {
+                d = std::move(inbox_.front());
+                inbox_.pop_front();
+                got_input = true;
+            }
         }
 
-        // 提交到 YOLO 异步流水线，不等待结果
-        int detect_color_int = (d->initial.enemy_color == "BLUE") ? 0
-                             : ((d->initial.enemy_color == "RED") ? 1 : -1);
-        InFlight pf;
-        pf.submitted = std::chrono::steady_clock::now();
-        void* user_data = d.get();
-        pf.data = std::move(d);
-        rp24_yolo_wrapper->submitFrame(pf.data->initial.frame, detect_color_int, user_data);
+        if (got_input) {
+            // 提交到 YOLO 异步流水线，不等待结果
+            int detect_color_int = (d->initial.enemy_color == "BLUE") ? 0
+                                 : ((d->initial.enemy_color == "RED") ? 1 : -1);
+            InFlight pf;
+            pf.submitted = std::chrono::steady_clock::now();
+            void* user_data = d.get();
+            pf.data = std::move(d);
+            rp24_yolo_wrapper->submitFrame(pf.data->initial.frame, detect_color_int, user_data);
 
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            in_flight_.push_back(std::move(pf));
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                in_flight_.push_back(std::move(pf));
+            }
         }
 
-        // 尽力取回已完成的结果
+        // 尽力取回已完成的结果（每轮都执行，即使没有新输入）
         drainResults();
     }
 }
