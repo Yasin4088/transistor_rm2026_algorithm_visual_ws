@@ -152,7 +152,7 @@ private:
 
         std::thread worker;
         std::atomic<bool> idle{true};
-        std::mutex mtx;
+        mutable std::mutex mtx;   // inflightCount() 是 const，锁需要 mutable
         std::condition_variable cv;
         AutoAimPipelineData* data = nullptr;
         bool exit_flag = false;
