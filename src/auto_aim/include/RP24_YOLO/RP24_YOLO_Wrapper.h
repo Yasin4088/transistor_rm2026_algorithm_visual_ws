@@ -10,7 +10,6 @@
 #include <thread>
 #include <utility>
 #include "macro/AutoAimMacro.h"
-#include "utils/PerformanceMonitor.h"
 
 class RP24YOLOWrapper {
 public:
@@ -25,7 +24,6 @@ public:
     RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node, string model_path, string device);
     ~RP24YOLOWrapper();
 
-    void setProfiler(std::shared_ptr<PerformanceMonitor> profiler);
     vector<Armor> detectArmors(cv::Mat& frame, string detect_color, vector<int>* rp24_classes = nullptr);
     vector<ArmorResult> detectArmorsWithClassifyAndTrack(cv::Mat& frame, string detect_color, 
         const cv::Point2f& ground_stable_point, vector<Armor>* armors_out = nullptr);
@@ -38,7 +36,6 @@ public:
     bool tryTakeResult(YoloResult* out);   // 非阻塞取结果：有则 true，无则 false
     vector<ArmorResult> classifyAndTrack(vector<Armor> armors, const vector<int>& rp24_classes,
                                          const cv::Point2f& ground_stable_point);
-    void reportFrameLatency(double ms);    // 上报整帧延迟（提交→取回）
 
 private:
     // ---------- 三阶段流水线数据结构 ----------
@@ -169,7 +166,6 @@ private:
     std::thread postprocess_thread_;
     std::atomic<uint64_t> next_frame_id_{0};
 
-    std::shared_ptr<PerformanceMonitor> profiler_;
     std::shared_ptr<OpenvinoInfer> openvino_infer;
     std::shared_ptr<YAML::Node> config_file_ptr;
     rclcpp::Node* node;

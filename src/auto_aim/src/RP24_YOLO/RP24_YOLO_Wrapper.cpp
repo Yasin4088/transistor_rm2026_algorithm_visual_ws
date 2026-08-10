@@ -1,4 +1,5 @@
 #include "RP24_YOLO/RP24_YOLO_Wrapper.h"
+#include "pipeline/AutoAimPipeline.h"
 
 std::pair<string, string> convertOnnxToIR(const string& onnx_path) {
     ov::Core core;
@@ -72,11 +73,6 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     infer_thread_ = std::thread(&RP24YOLOWrapper::inferLoop, this);
     postprocess_thread_ = std::thread(&RP24YOLOWrapper::postprocessLoop, this);
     cout << "[INFO] YOLO 3-stage async pipeline started" << endl;
-}
-
-void RP24YOLOWrapper::setProfiler(std::shared_ptr<PerformanceMonitor> profiler)
-{
-    profiler_ = profiler;
 }
 
 RP24YOLOWrapper::~RP24YOLOWrapper()
@@ -155,7 +151,13 @@ void RP24YOLOWrapper::preprocessLoop()
         work.infer_input = preprocess(work.frame);
         double stage_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - stage_start).count();
-        if (profiler_) profiler_->addStageTime("yolo_preprocess", stage_ms);
+        // 写入帧的 performance_profile（同学的监控机制），保留 YOLO 分阶段计时
+        if (work.user_data != nullptr) {
+            auto* pd = static_cast<AutoAimPipelineData*>(work.user_data);
+            if (pd->initial.performance_profile) {
+                pd->initial.performance_profile->stages["yolo_preprocess"] += stage_ms;
+            }
+        }
 
         if (!pre_register_.put(std::move(work))) break;
     }
@@ -171,7 +173,12 @@ void RP24YOLOWrapper::inferLoop()
         work.objects = infer(work.infer_input, work.detect_color);
         double stage_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - stage_start).count();
-        if (profiler_) profiler_->addStageTime("yolo_infer", stage_ms);
+        if (work.user_data != nullptr) {
+            auto* pd = static_cast<AutoAimPipelineData*>(work.user_data);
+            if (pd->initial.performance_profile) {
+                pd->initial.performance_profile->stages["yolo_infer"] += stage_ms;
+            }
+        }
 
         if (!infer_register_.put(std::move(work))) break;
     }
@@ -187,7 +194,12 @@ void RP24YOLOWrapper::postprocessLoop()
         work.armors = postprocess(work.frame, work.objects, &work.rp24_classes);
         double stage_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - stage_start).count();
-        if (profiler_) profiler_->addStageTime("yolo_postprocess", stage_ms);
+        if (work.user_data != nullptr) {
+            auto* pd = static_cast<AutoAimPipelineData*>(work.user_data);
+            if (pd->initial.performance_profile) {
+                pd->initial.performance_profile->stages["yolo_postprocess"] += stage_ms;
+            }
+        }
 
         if (!result_register_.put(std::move(work))) break;
     }
@@ -272,9 +284,7 @@ vector<Armor> RP24YOLOWrapper::detectArmors(cv::Mat& frame, string detect_color,
 
     // 提交到三阶段流水线，阻塞等待该帧结果
     uint64_t frame_id = submitFrame(frame, detect_color_int);
-    if (profiler_) profiler_->beginFrame(frame_id);
     YoloResult result = takeResult(frame_id);
-    if (profiler_) profiler_->endFrame();
 
     if (rp24_classes != nullptr) {
         *rp24_classes = result.rp24_classes;
@@ -316,7 +326,3 @@ vector<ArmorResult> RP24YOLOWrapper::classifyAndTrack(
     return armor_tracker -> afterProcess();
 }
 
-void RP24YOLOWrapper::reportFrameLatency(double ms)
-{
-    if (profiler_) profiler_->addTotalTime(ms);
-}
