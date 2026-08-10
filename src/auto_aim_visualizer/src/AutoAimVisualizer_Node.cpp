@@ -213,15 +213,18 @@ private:
         exec_path[len] = '\0';
 
         fs::path full_path(exec_path);
-        std::string full_path_str = full_path.string();
-        const std::string ws_dir_name = "transistor_rm2026_algorithm_visual_ws";
-        size_t pos = full_path_str.find(ws_dir_name);
-        if (pos == std::string::npos) {
+        // 从可执行文件路径向上查找工作空间根目录（含 src/shared_files/config.yaml 的目录）
+        fs::path ws_dir_path = full_path.parent_path();
+        while (!ws_dir_path.empty() &&
+               !fs::exists(ws_dir_path / "src" / "shared_files" / "config.yaml")) {
+            ws_dir_path = ws_dir_path.parent_path();
+        }
+        if (ws_dir_path.empty() ||
+            !fs::exists(ws_dir_path / "src" / "shared_files" / "config.yaml")) {
             std::cerr << "Error: Workspace directory not found in path" << std::endl;
             return nullptr;
         }
 
-        fs::path ws_dir_path = full_path_str.substr(0, pos + ws_dir_name.length());
         fs::path config_file_path = ws_dir_path / "src/shared_files/config.yaml";
         return std::make_shared<YAML::Node>(YAML::LoadFile(config_file_path));
     }
