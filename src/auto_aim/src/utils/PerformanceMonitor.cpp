@@ -78,6 +78,7 @@ void PerformanceMonitor::addTotalTime(double ms)
     std::lock_guard<std::mutex> lock(mtx_);
     FrameRecord record;
     record.total_ms = ms;
+    record.completed_at = std::chrono::steady_clock::now();
     frames_.push_back(std::move(record));
 
     if (frames_.size() >= report_interval_) {
@@ -108,6 +109,7 @@ void PerformanceMonitor::endFrame()
     FrameRecord record;
     record.frame_id = frame_id_;
     record.total_ms = total_ms;
+    record.completed_at = std::chrono::steady_clock::now();
     frames_.push_back(std::move(record));
 
     frame_active_ = false;
@@ -134,7 +136,18 @@ void PerformanceMonitor::report()
     }
 
     double avg_total_ms = total_sum / static_cast<double>(count);
-    double fps = avg_total_ms > 0.0 ? 1000.0 / avg_total_ms : 0.0;
+    double fps = 0.0;
+    if (count >= 2) {
+        // 真实吞吐：窗口内完成帧数 / 首尾完成时间差（异步多帧在飞时 latency 倒数不再等于吞吐）
+        double span_s = std::chrono::duration<double>(
+            frames_.back().completed_at - frames_.front().completed_at).count();
+        if (span_s > 0.0) {
+            fps = static_cast<double>(count - 1) / span_s;
+        }
+    }
+    if (fps <= 0.0 && avg_total_ms > 0.0) {
+        fps = 1000.0 / avg_total_ms;  // 兜底（样本不足时）
+    }
 
     std::cerr << "========== Performance ==========\n";
     std::cerr << "Frames: " << count << "\n\n";

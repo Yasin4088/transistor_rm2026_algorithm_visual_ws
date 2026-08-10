@@ -44,6 +44,7 @@ private:
     struct FrameRecord {
         uint64_t frame_id = 0;
         double total_ms = 0.0;
+        std::chrono::steady_clock::time_point completed_at;  // 帧完成时刻（算真实吞吐）
     };
 
     void report();
