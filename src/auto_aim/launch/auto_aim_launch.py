@@ -37,6 +37,12 @@ def generate_launch_description():
             #arguments = ['--ros-args', '--log-level', 'DEBUG']
         ),
         Node(
+            package='auto_aim_visualizer',
+            executable='auto_aim_visualizer_node',
+            name='auto_aim_visualizer_node',
+            output='screen',
+        ),
+        Node(
             package='shm_python_processor_pkg',
             executable='shm_classifier_node',
             name='shm_classifier_node',

@@ -7,8 +7,6 @@
 #include <stdexcept>
 
 #include "macro/AutoAimMacro.h"
-#include "visualizer/RestFrameDraw.h"
-#include "utils/PerformanceMonitor.h"
 
 namespace {
 
@@ -69,7 +67,6 @@ AutoAimPipeline::Stage1::Stage1(std::shared_ptr<YAML::Node> config_file_ptr,
     Params params = loadDetectorParams(config_file_ptr, &init_enemy_color);
 
     use_rp24_yolo = (*config_file_ptr)["use_RP24_YOLO"].as<bool>();
-    RCLCPP_INFO(node->get_logger(), "[diag] Stage1 use_rp24_yolo = %d", (int)use_rp24_yolo);
     light_detector = std::make_shared<LightBarDetector>(params, config_file_ptr, node);
     armor_detector = std::make_shared<ArmorDetector>(config_file_ptr, node);
     classifier = std::make_shared<ArmorClassifier>(config_file_ptr, node, workspace_path);
@@ -109,7 +106,7 @@ void AutoAimPipeline::Stage1::run()
 
 void AutoAimPipeline::Stage1::runLegacy()
 {
-    // 原有同步路径：一次一帧，idle 交接
+    // 原有同步路径：一次一帧，idle 交接（仅非 YOLO 模式使用）
     while (true) {
         std::unique_lock<std::mutex> lock(mtx);
         cv.wait(lock, [this]() { return !idle.load() || exit_flag; });
@@ -118,6 +115,7 @@ void AutoAimPipeline::Stage1::runLegacy()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage1 = AutoAimPipelineData::Stage1Data{};
         d->stage1.used_yolo = false;
         light_detector->setEnemyColor(toEnemyColor(d->initial.enemy_color));
@@ -131,6 +129,10 @@ void AutoAimPipeline::Stage1::runLegacy()
                 d->stage1.armors,
                 d->initial.ground_stable_point);
 
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage1_2d_detect_classify"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -207,15 +209,18 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
             dd->stage1.used_yolo = true;
             done_.push_back(std::move(dd));
         }
+
         latency_ms = std::chrono::duration<double, std::milli>(now - it->submitted).count();
         d = std::move(it->data);
-
-        // 关键修复：结果帧的条目也要一并移除（否则它带着空 data 留在 in_flight_，
-        // 下一次 drop 循环对空指针解引用会段错误）
+        // 关键：结果帧的条目也要一并移除，否则它带着空 data 留在 in_flight_，
+        // 下一次 drop 循环对空指针解引用会段错误
         in_flight_.erase(in_flight_.begin(), it + 1);
     }
 
-    rp24_yolo_wrapper->reportFrameLatency(latency_ms);
+    // 记录 stage1 耗时（提交 → 结果取回）到帧的 performance_profile（同学的监控机制）
+    if (d->initial.performance_profile) {
+        d->initial.performance_profile->stages["stage1_2d_detect_classify"] += latency_ms;
+    }
 
     d->stage1 = AutoAimPipelineData::Stage1Data{};
     d->stage1.used_yolo = true;
@@ -311,6 +316,7 @@ void AutoAimPipeline::Stage2::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage2 = AutoAimPipelineData::Stage2Data{};
         rest_frame->updateCamOrientation(
             d->initial.yaw,
@@ -330,6 +336,10 @@ void AutoAimPipeline::Stage2::run()
         }
         d->stage2.valid_count = d->stage2.solved_results.size();
 
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage2_3d_solve_transform"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -384,6 +394,7 @@ void AutoAimPipeline::Stage3::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage3 = AutoAimPipelineData::Stage3Data{};
         rest_frame->updateCamOrientation(
             d->initial.yaw,
@@ -414,6 +425,10 @@ void AutoAimPipeline::Stage3::run()
         }
         d->stage3.should_send_reset = d->stage3.predictor_result.reset;
 
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage3_predict_command"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
     }
 }
@@ -429,14 +444,12 @@ AutoAimPipeline::Stage4::Stage4(std::shared_ptr<YAML::Node> config_file_ptr,
                                 rclcpp::Node* node,
                                 const std::filesystem::path& workspace_path)
 {
-    armor_solver = std::make_shared<ArmorSolver>(config_file_ptr, node);
-    rest_frame = std::make_shared<RestFrame>();
-    rest_frame->updateCamOrientation(0, 0, 0);
-    rest_frame->updateCamPosition(0, 0, 0);
-    fps_counter = std::make_shared<FrameRateCounter>(30);
-    yaw_visualizer = std::make_shared<YawVisualizer>();
+    (void)node;
+    visualizer_config = VisualizerConfig::fromYaml(*config_file_ptr);
 #if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
-    two_video_logger = std::make_shared<TwoVideoLogger>(workspace_path / "VideoLog");
+    if (visualizer_config.enable && visualizer_config.log_video) {
+        two_video_logger = std::make_shared<TwoVideoLogger>(workspace_path / "VideoLog");
+    }
 #endif
 }
 
@@ -468,179 +481,52 @@ void AutoAimPipeline::Stage4::run()
         AutoAimPipelineData* d = data;
         lock.unlock();
 
+        const auto stage_start_time = PerfClock::now();
         d->stage4 = AutoAimPipelineData::Stage4Data{};
-        rest_frame->updateCamOrientation(
-            d->initial.yaw,
-            d->initial.pitch,
-            d->initial.roll);
-        rest_frame->updateCamPosition(0, 0, 0);
-
-        cv::Mat display = d->initial.frame.clone();
-
-        cv::putText(display,
-            cv::format("V: %.1f m/s, P: %.1f, Y: %.1f",
-                d->initial.bullet_velocity, d->initial.pitch, d->initial.yaw),
-            cv::Point(20, 50),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-        cv::putText(display,
-            "enemy_color: " + d->initial.enemy_color,
-            cv::Point2f(20, 80),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-        cv::putText(display,
-            "aiming " +
-                ArmorType::ArmorTypeStrings[d->stage3.predictor_result.armor_type] +
-                ": " +
-                PredictorType::PredictorTypeStrings[d->stage3.predictor_result.predictor_type],
-            cv::Point2f(20, 110),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-
-        drawRestFrame(display, rest_frame, armor_solver);
-        drawResults(display, *d);
-
-        yaw_visualizer->update(
-            d->initial.yaw + (d->initial.use_head_imu ? d->initial.to_mcu_delta_yaw : 0.0f),
-            d->stage3.mcu_command_yaw);
-        d->stage4.yaw_visualizer_frame = yaw_visualizer->getDisplay();
-
-        fps_counter->tick();
-        cv::putText(display,
-            cv::format("frame rate: %.1f fps", fps_counter->fps()),
-            cv::Point(20, 140),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-        cv::putText(display,
-            cv::format("since start: %.4f s",
-                static_cast<float>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - d->initial.node_start_time).count()) / 1000.0f),
-            cv::Point(20, 170),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-
-        auto system_clock_now = std::chrono::system_clock::now();
-        std::time_t system_clock_now_t = std::chrono::system_clock::to_time_t(system_clock_now);
-        std::tm* system_clock_now_tm = std::localtime(&system_clock_now_t);
-        char system_clock_now_str_buffer[80];
-        std::strftime(system_clock_now_str_buffer, sizeof(system_clock_now_str_buffer),
-            "%Y-%m-%d %H:%M:%S", system_clock_now_tm);
-        cv::putText(display,
-            cv::format("system_clock: %s", system_clock_now_str_buffer),
-            cv::Point(20, 200),
-            cv::FONT_HERSHEY_COMPLEX,
-            0.7,
-            cv::Scalar(0, 255, 0),
-            1,
-            8,
-            false);
-
         d->stage4.rmm_visualize_frame =
             d->stage3.predictor_result.info_images.RMM_visualize_frame;
         d->stage4.common_debug_oscilloscope_frame =
             d->stage3.predictor_result.info_images.common_debug_oscilloscope_frame;
         d->stage4.armor_count = d->stage2.solved_results.size();
 
+        if (visualizer_config.enable && visualizer_config.publish_topics) {
+            AutoAimVisualizerDebugFrame debug_frame;
+            debug_frame.frame = d->initial.frame.clone();
+            debug_frame.node_start_time = d->initial.node_start_time;
+            debug_frame.bullet_velocity = d->initial.bullet_velocity;
+            debug_frame.enemy_color = d->initial.enemy_color;
+            debug_frame.pitch = d->initial.pitch;
+            debug_frame.yaw = d->initial.yaw;
+            debug_frame.roll = d->initial.roll;
+            debug_frame.ground_stable_point = d->initial.ground_stable_point;
+            debug_frame.lights = d->stage1.lights;
+            debug_frame.armors = d->stage1.armors;
+            debug_frame.solved_results = d->stage2.solved_results;
+            debug_frame.armor_type = d->stage3.predictor_result.armor_type;
+            debug_frame.predictor_type = d->stage3.predictor_result.predictor_type;
+            debug_frame.mcu_command_yaw = d->stage3.mcu_command_yaw;
+            d->stage4.visualizer_debug_frame = std::move(debug_frame);
+        }
+
 #if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
         if (two_video_logger) {
             two_video_logger->updateOriginFrame(d->initial.frame);
-            two_video_logger->updateDrewFrame(display);
+            two_video_logger->updateDrewFrame(d->initial.frame);
             two_video_logger->updateRMMFrame(d->stage4.rmm_visualize_frame);
             two_video_logger->updateCDOFrame(d->stage4.common_debug_oscilloscope_frame);
-            two_video_logger->updateYawFrame(d->stage4.yaw_visualizer_frame);
-            two_video_logger->updateComFrame(d->initial.com_data_visualize_frame);
+            if (visualizer_config.draw.com_data) {
+                two_video_logger->updateComFrame(d->initial.com_data_visualize_frame);
+            }
             two_video_logger->writeTwoFrame();
             d->stage4.request_com_frame_refresh = true;
         }
 #endif
 
-        d->stage4.display = std::move(display);
+        if (d->initial.performance_profile) {
+            d->initial.performance_profile->stages["stage4_visualize_log"] +=
+                PerformanceMonitor::durationMs(stage_start_time, PerfClock::now());
+        }
         idle.store(true);
-    }
-}
-
-void AutoAimPipeline::Stage4::drawResults(cv::Mat& image, const AutoAimPipelineData& d)
-{
-    cv::circle(image, d.initial.ground_stable_point, 10, cv::Scalar(0, 255, 0), 2);
-
-    cv::Point3f test_point_pos = rest_frame->worldToPnpP3f({0, 1000, 0});
-    cv::Point2f test_point_pos_pixel = armor_solver->project3DToPixel(test_point_pos);
-    cv::circle(image, test_point_pos_pixel, 8, cv::Scalar(255, 0, 255), 2);
-
-    for (const auto& light : d.stage1.lights) {
-        cv::Point2f vertices[4];
-        light.el.points(vertices);
-        for (int i = 0; i < 4; i++) {
-            cv::line(image, vertices[i], vertices[(i + 1) % 4], cv::Scalar(0, 255, 0), 2);
-        }
-    }
-
-    for (const auto& armor : d.stage1.armors) {
-        for (size_t i = 0; i < armor.corners.size() && i < 4; i++) {
-            cv::line(image, armor.corners[i], armor.corners[(i + 1) % 4],
-                cv::Scalar(0, 255, 255), 2);
-        }
-        if (!armor.corners.empty()) {
-            std::string conf_str = cv::format("conf: %.2f", armor.confidence);
-            cv::Point text_pos(armor.corners[0].x, armor.corners[0].y - 10);
-            cv::putText(image, conf_str, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                cv::Scalar(0, 255, 255), 1);
-        }
-        for (size_t i = 0; i < armor.light_bar_corners.size() && i < 4; i++) {
-            cv::line(image, armor.light_bar_corners[i], armor.light_bar_corners[(i + 1) % 4],
-                cv::Scalar(255, 0, 0), 2);
-        }
-    }
-
-    for (const auto& res : d.stage2.solved_results) {
-        cv::Scalar contour_color = res.is_tracked_now ? cv::Scalar(0, 0, 255)
-                                                      : cv::Scalar(255, 0, 255);
-        for (size_t i = 0; i < res.corners.size() && i < 4; i++) {
-            cv::line(image, res.corners[i], res.corners[(i + 1) % 4], contour_color, 2);
-        }
-        for (size_t i = 0; i < res.armor.light_bar_corners.size() && i < 4; i++) {
-            cv::line(image, res.armor.light_bar_corners[i],
-                res.armor.light_bar_corners[(i + 1) % 4],
-                cv::Scalar(0, 255, 255),
-                2);
-        }
-        for (auto& prediction : res.predictions) {
-            cv::circle(image, prediction, 3, cv::Scalar(255, 0, 255), -1);
-        }
-        cv::circle(image, res.center_predicted, 3, cv::Scalar(0, 255, 255), -1);
-        cv::circle(image, res.center, 3, cv::Scalar(0, 0, 255), -1);
-
-        std::string text = cv::format("N%d (%.2f)", res.number, res.confidence);
-        cv::Point text_pos(res.corners[1].x, res.corners[1].y - 10);
-        cv::putText(image, text, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.6,
-            cv::Scalar(0, 0, 0), 3);
-        cv::putText(image, text, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.6,
-            cv::Scalar(0, 0, 255), 1);
-
-        cv::Point track_pos(res.center.x - 30, res.center.y + 30);
-        cv::putText(image, "TRACKING", track_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5,
-            cv::Scalar(0, 255, 0), 1);
     }
 }
 
@@ -650,10 +536,12 @@ AutoAimPipeline::AutoAimPipeline(std::shared_ptr<YAML::Node> config_file_ptr,
                                  rclcpp::Node* node,
                                  const std::filesystem::path& workspace_path,
                                  std::chrono::steady_clock::time_point node_start_time,
+                                 std::shared_ptr<PerformanceMonitor> performance_monitor,
                                  int max_queue_size,
                                  float max_delay_seconds)
     : max_queue_size_(max_queue_size)
     , max_delay_seconds_(max_delay_seconds)
+    , performance_monitor_(std::move(performance_monitor))
     , stage1_(config_file_ptr, node, workspace_path)
     , stage2_(config_file_ptr, node)
     , stage3_(config_file_ptr, node, node_start_time)
@@ -675,7 +563,7 @@ AutoAimPipeline::~AutoAimPipeline()
     scheduler_exit_.store(true);
     if (scheduler_thread_.joinable()) scheduler_thread_.join();
 
-    // 先停止 YOLO 异步流水线，否则 Stage1 可能阻塞在取结果上导致 join 挂死
+    // 先停止 YOLO 异步流水线，否则 Stage1 阻塞在取结果上会让 join 挂死
     if (stage1_.rp24_yolo_wrapper) {
         stage1_.rp24_yolo_wrapper->stop();
     }
@@ -711,6 +599,15 @@ void AutoAimPipeline::addFrame(AutoAimPipelineData::InitialData initial)
 {
     auto data = std::make_unique<AutoAimPipelineData>();
     data->initial = std::move(initial);
+    if (data->initial.performance_start_time == std::chrono::steady_clock::time_point{}) {
+        data->initial.performance_start_time = PerfClock::now();
+    }
+    if (performance_monitor_ && performance_monitor_->enabled()) {
+        data->initial.performance_profile = std::make_shared<FrameProfile>(
+            performance_monitor_->beginFrame(
+                performance_frame_id_++,
+                data->initial.performance_start_time));
+    }
 
     std::lock_guard<std::mutex> lock(input_mtx_);
     if (scheduler_exit_.load()) return;
@@ -746,6 +643,7 @@ AutoAimPipeline::tryPopResult(const std::chrono::steady_clock::time_point& times
         result.valid_data.rmm_visualize_frame = std::move(front->stage4.rmm_visualize_frame);
         result.valid_data.common_debug_oscilloscope_frame =
             std::move(front->stage4.common_debug_oscilloscope_frame);
+        result.valid_data.visualizer_debug_frame = std::move(front->stage4.visualizer_debug_frame);
         result.valid_data.armor_count = front->stage4.armor_count;
         result.valid_data.request_com_frame_refresh = front->stage4.request_com_frame_refresh;
         result.valid = true;
@@ -758,13 +656,6 @@ AutoAimPipeline::tryPopResult(const std::chrono::steady_clock::time_point& times
 void AutoAimPipeline::resetYawIntegration()
 {
     stage3_.resetYawIntegration();
-}
-
-void AutoAimPipeline::setProfiler(const std::shared_ptr<PerformanceMonitor>& profiler)
-{
-    if (stage1_.rp24_yolo_wrapper) {
-        stage1_.rp24_yolo_wrapper->setProfiler(profiler);
-    }
 }
 
 void AutoAimPipeline::schedulerLoop()
@@ -834,6 +725,9 @@ void AutoAimPipeline::schedulerLoop()
 
         if (stage4_.isIdle()) {
             if (in_flight_[3]) {
+                if (performance_monitor_ && in_flight_[3]->initial.performance_profile) {
+                    performance_monitor_->endFrame(*in_flight_[3]->initial.performance_profile);
+                }
                 std::lock_guard<std::mutex> lk(output_mtx_);
                 output_queue_.push_back(std::move(in_flight_[3]));
             }

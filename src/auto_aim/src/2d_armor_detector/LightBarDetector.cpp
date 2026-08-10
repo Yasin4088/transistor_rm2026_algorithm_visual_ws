@@ -1,5 +1,4 @@
 // LightBarDetector.cpp
-// 实现灯条检测的具体功能
 
 #include "2d_armor_detector/LightBarDetector.h"
 

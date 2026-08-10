@@ -14,6 +14,7 @@ find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(TBB REQUIRED)
@@ -26,15 +27,19 @@ find_package(fmt REQUIRED)
 
 find_package(OpenVINO REQUIRED)
 
-#rosidl_generate_interfaces(${PROJECT_NAME}
-#  "msg/SerialData.msg"
-#  "msg/GimbalCommand.msg"
-#)
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Point2f.msg"
+  "msg/DebugLight.msg"
+  "msg/DebugArmor.msg"
+  "msg/DebugArmorResult.msg"
+  "msg/VisualizerDebugData.msg"
+  DEPENDENCIES std_msgs
+)
 
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-#rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
 
 # 查找 MvCameraControl 库
 find_library(MVCAMERA_LIB MvCameraControl PATHS /opt/MVS/lib/64)
@@ -75,8 +80,6 @@ add_library(armor_detector SHARED
     src/predictor/PredictorMain.cpp
     # src/predictor/RotationJudge.cpp
     src/visualizer/DataVisualizer.cpp
-    src/visualizer/RestFrameDraw.cpp
-    src/visualizer/YawVisualizer.cpp
     src/communication/SharedMemoryClassifier.cpp
     # src/communication/SharedMemoryYOLOPose.cpp
     src/communication/Com.cpp
@@ -142,7 +145,7 @@ target_link_libraries(armor_detect_node
     rclcpp::rclcpp
     ${sensor_msgs_LIBRARIES}
     ${cv_bridge_LIBRARIES}
-#    "${cpp_typesupport_target}"
+    "${cpp_typesupport_target}"
     yaml-cpp
     TBB::tbb
     openvino::runtime

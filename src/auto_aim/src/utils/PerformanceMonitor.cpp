@@ -2,172 +2,112 @@
 
 #include <iomanip>
 #include <iostream>
-#include <utility>
 
-PerformanceMonitor::PerformanceMonitor(size_t report_interval)
-    : report_interval_(report_interval)
+PerformanceMonitor::PerformanceMonitor(bool enabled, size_t report_interval)
+    : enabled_(enabled)
+    , report_interval_(report_interval == 0 ? 1 : report_interval)
 {
-    // 启动标记：用于确认二进制是否为最新（stderr 无缓冲，任何环境下都能看到）
-    std::cerr << "[PerformanceMonitor] initialized, report interval = "
-              << report_interval_ << " frames\n";
 }
 
-void PerformanceMonitor::beginFrame(uint64_t frame_id)
+bool PerformanceMonitor::enabled() const
 {
-    std::lock_guard<std::mutex> lock(mtx_);
-    frame_id_ = frame_id;
-    frame_start_ = std::chrono::steady_clock::now();
-    frame_active_ = true;
-    has_marks_ = false;
-    pending_stage_.clear();
+    return enabled_.load();
 }
 
-void PerformanceMonitor::mark(const std::string& stage)
+void PerformanceMonitor::setEnabled(bool enabled)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!frame_active_) {
-        return;
+    enabled_.store(enabled);
+}
+
+FrameProfile PerformanceMonitor::beginFrame(uint64_t frame_id,
+                                            PerfTimePoint start_time) const
+{
+    FrameProfile profile;
+    profile.frame_id = frame_id;
+    profile.frame_start_time = start_time;
+    return profile;
+}
+
+void PerformanceMonitor::recordStage(FrameProfile& profile,
+                                     const std::string& stage,
+                                     PerfTimePoint start_time,
+                                     PerfTimePoint end_time) const
+{
+    if (!enabled()) return;
+    profile.stages[stage] += durationMs(start_time, end_time);
+}
+
+void PerformanceMonitor::endFrame(FrameProfile& profile,
+                                  PerfTimePoint end_time)
+{
+    if (!enabled()) return;
+
+    profile.total_ms = durationMs(profile.frame_start_time, end_time);
+
+    std::lock_guard<std::mutex> lock(history_mtx_);
+    history_.push_back(profile);
+    if (history_.size() >= report_interval_) {
+        printStatisticsLocked();
+        history_.clear();
     }
+}
 
-    auto now = std::chrono::steady_clock::now();
+double PerformanceMonitor::durationMs(PerfTimePoint start_time,
+                                      PerfTimePoint end_time)
+{
+    return std::chrono::duration<double, std::milli>(end_time - start_time).count();
+}
 
-    // 关闭上一个阶段：其耗时 = 本次 mark 与上次 mark 的时间差
-    if (has_marks_) {
-        double ms =
-            std::chrono::duration<double, std::milli>(now - last_mark_).count();
-        stage_window_ms_[pending_stage_] += ms;
-    }
+void PerformanceMonitor::printStatistics()
+{
+    std::lock_guard<std::mutex> lock(history_mtx_);
+    printStatisticsLocked();
+}
 
-    pending_stage_ = stage;
-    bool first_seen = true;
-    for (const auto& name : stage_order_) {
-        if (name == stage) {
-            first_seen = false;
-            break;
+void PerformanceMonitor::reset()
+{
+    std::lock_guard<std::mutex> lock(history_mtx_);
+    history_.clear();
+}
+
+void PerformanceMonitor::printStatisticsLocked() const
+{
+    if (history_.empty()) return;
+
+    const std::vector<std::string> stage_order = {
+        "stage1_2d_detect_classify",
+        "stage2_3d_solve_transform",
+        "stage3_predict_command",
+        "stage4_visualize_log",
+    };
+
+    std::unordered_map<std::string, double> stage_total;
+    double total_time = 0.0;
+
+    for (const auto& frame : history_) {
+        total_time += frame.total_ms;
+        for (const auto& stage : frame.stages) {
+            stage_total[stage.first] += stage.second;
         }
     }
-    if (first_seen) {
-        stage_order_.push_back(stage);
-    }
-    last_mark_ = now;
-    has_marks_ = true;
-}
 
-void PerformanceMonitor::addStageTime(const std::string& stage, double ms)
-{
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!frame_active_) {
-        return;
-    }
+    const double frame_count = static_cast<double>(history_.size());
 
-    stage_window_ms_[stage] += ms;
-    bool first_seen = true;
-    for (const auto& name : stage_order_) {
-        if (name == stage) {
-            first_seen = false;
-            break;
-        }
-    }
-    if (first_seen) {
-        stage_order_.push_back(stage);
-    }
-}
+    std::cout << "\n========== Auto Aim Performance ==========\n";
+    std::cout << "Frames: " << history_.size() << "\n";
+    std::cout << std::fixed << std::setprecision(3);
 
-void PerformanceMonitor::addTotalTime(double ms)
-{
-    std::lock_guard<std::mutex> lock(mtx_);
-    FrameRecord record;
-    record.total_ms = ms;
-    record.completed_at = std::chrono::steady_clock::now();
-    frames_.push_back(std::move(record));
-
-    if (frames_.size() >= report_interval_) {
-        report();
-        frames_.clear();
-        stage_window_ms_.clear();
-    }
-}
-
-void PerformanceMonitor::endFrame()
-{
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (!frame_active_) {
-        return;
+    for (const auto& stage : stage_order) {
+        const auto it = stage_total.find(stage);
+        const double avg_ms = (it == stage_total.end()) ? 0.0 : it->second / frame_count;
+        std::cout << stage << ": " << avg_ms << " ms\n";
     }
 
-    auto now = std::chrono::steady_clock::now();
-    double total_ms =
-        std::chrono::duration<double, std::milli>(now - frame_start_).count();
-
-    // 关闭最后一个阶段
-    if (has_marks_) {
-        double ms =
-            std::chrono::duration<double, std::milli>(now - last_mark_).count();
-        stage_window_ms_[pending_stage_] += ms;
+    const double avg_total = total_time / frame_count;
+    std::cout << "------------------------------------------\n";
+    std::cout << "Total(from data init): " << avg_total << " ms\n";
+    if (avg_total > 0.0) {
+        std::cout << "FPS: " << 1000.0 / avg_total << "\n";
     }
-
-    FrameRecord record;
-    record.frame_id = frame_id_;
-    record.total_ms = total_ms;
-    record.completed_at = std::chrono::steady_clock::now();
-    frames_.push_back(std::move(record));
-
-    frame_active_ = false;
-    has_marks_ = false;
-    pending_stage_.clear();
-
-    if (frames_.size() >= report_interval_) {
-        report();
-        frames_.clear();
-        stage_window_ms_.clear();
-    }
-}
-
-void PerformanceMonitor::report()
-{
-    size_t count = frames_.size();
-    if (count == 0) {
-        return;
-    }
-
-    double total_sum = 0.0;
-    for (const auto& frame : frames_) {
-        total_sum += frame.total_ms;
-    }
-
-    double avg_total_ms = total_sum / static_cast<double>(count);
-    double fps = 0.0;
-    if (count >= 2) {
-        // 真实吞吐：窗口内完成帧数 / 首尾完成时间差（异步多帧在飞时 latency 倒数不再等于吞吐）
-        double span_s = std::chrono::duration<double>(
-            frames_.back().completed_at - frames_.front().completed_at).count();
-        if (span_s > 0.0) {
-            fps = static_cast<double>(count - 1) / span_s;
-        }
-    }
-    if (fps <= 0.0 && avg_total_ms > 0.0) {
-        fps = 1000.0 / avg_total_ms;  // 兜底（样本不足时）
-    }
-
-    std::cerr << "========== Performance ==========\n";
-    std::cerr << "Frames: " << count << "\n\n";
-
-    for (const auto& name : stage_order_) {
-        double avg_ms = 0.0;
-        auto it = stage_window_ms_.find(name);
-        if (it != stage_window_ms_.end()) {
-            avg_ms = it->second / static_cast<double>(count);
-        }
-        std::cerr << name << ":\n"
-                  << std::fixed << std::setprecision(2) << avg_ms << " ms\n\n";
-    }
-
-    std::cerr << "Total:\n"
-              << std::fixed << std::setprecision(2) << avg_total_ms << " ms\n\n";
-    std::cerr << "FPS:\n"
-              << std::fixed << std::setprecision(2) << fps << "\n\n";
-    std::cerr << "================================\n";
-    // ros2 launch / 重定向等管道环境下 stdout 是全缓冲，
-    // 必须显式 flush，否则报告会一直憋在缓冲区里不显示
-    std::cerr.flush();
+    std::cout << "==========================================\n\n" << std::flush;
 }

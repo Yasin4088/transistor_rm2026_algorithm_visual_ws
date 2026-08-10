@@ -1,4 +1,4 @@
-#pragma once //防止重复包含
+#pragma once
 
 #include <atomic>
 #include <chrono>
@@ -19,6 +19,7 @@
 #include "2d_armor_detector/Armor.h"
 #include "2d_armor_detector/ArmorClassifier.h"
 #include "2d_armor_detector/ArmorDetector.h"
+#include "2d_armor_detector/LightBar.h"
 #include "2d_armor_detector/LightBarDetector.h"
 #include "3d_processing/ArmorSolver.h"
 #include "3d_processing/BallisticSolver.h"
@@ -27,9 +28,27 @@
 #include "logger/TwoVideoLogger.h"
 #include "predictor/PredictorMain.h"
 #include "utils/FrameRateCounter.h"
-#include "visualizer/YawVisualizer.h"
+#include "utils/PerformanceMonitor.h"
+#include "utils/VisualizerConfig.h"
 
-class PerformanceMonitor;
+struct AutoAimVisualizerDebugFrame {
+    cv::Mat frame;
+    std::chrono::steady_clock::time_point node_start_time;
+
+    float bullet_velocity = 0.0f;
+    std::string enemy_color;
+    float pitch = 0.0f;
+    float yaw = 0.0f;
+    float roll = 0.0f;
+    cv::Point2f ground_stable_point;
+
+    std::vector<Light> lights;
+    std::vector<Armor> armors;
+    std::vector<ArmorResult> solved_results;
+    ArmorType::ArmorType armor_type = ArmorType::Hero;
+    PredictorType::PredictorType predictor_type = PredictorType::None;
+    float mcu_command_yaw = 0.0f;
+};
 
 struct AutoAimPipelineData {
     struct InitialData {
@@ -37,6 +56,8 @@ struct AutoAimPipelineData {
         cv::Mat com_data_visualize_frame;
         std::chrono::steady_clock::time_point frame_timestamp;
         std::chrono::steady_clock::time_point node_start_time;
+        std::chrono::steady_clock::time_point performance_start_time;
+        std::shared_ptr<FrameProfile> performance_profile;
 
         float bullet_velocity = 0.0f;
         std::string enemy_color;
@@ -78,6 +99,7 @@ struct AutoAimPipelineData {
         cv::Mat yaw_visualizer_frame;
         cv::Mat rmm_visualize_frame;
         cv::Mat common_debug_oscilloscope_frame;
+        AutoAimVisualizerDebugFrame visualizer_debug_frame;
         size_t armor_count = 0;
         bool request_com_frame_refresh = false;
     } stage4;
@@ -102,6 +124,7 @@ public:
         cv::Mat yaw_visualizer_frame;
         cv::Mat rmm_visualize_frame;
         cv::Mat common_debug_oscilloscope_frame;
+        AutoAimVisualizerDebugFrame visualizer_debug_frame;
         size_t armor_count = 0;
         bool request_com_frame_refresh = false;
     };
@@ -116,6 +139,7 @@ public:
                     rclcpp::Node* node,
                     const std::filesystem::path& workspace_path,
                     std::chrono::steady_clock::time_point node_start_time,
+                    std::shared_ptr<PerformanceMonitor> performance_monitor = nullptr,
                     int max_queue_size = 4,
                     float max_delay_seconds = 0.0f);
     ~AutoAimPipeline();
@@ -123,7 +147,6 @@ public:
     void addFrame(AutoAimPipelineData::InitialData initial);
     ProcessResult tryPopResult(const std::chrono::steady_clock::time_point& timestamp);
     void resetYawIntegration();
-    void setProfiler(const std::shared_ptr<PerformanceMonitor>& profiler);
 
 private:
     static constexpr int NUM_STAGES = 4;
@@ -131,6 +154,8 @@ private:
 
     int max_queue_size_;
     float max_delay_seconds_;
+    std::shared_ptr<PerformanceMonitor> performance_monitor_;
+    uint64_t performance_frame_id_ = 0;
 
     std::deque<std::unique_ptr<AutoAimPipelineData>> input_queue_;
     std::mutex input_mtx_;
@@ -226,11 +251,8 @@ private:
     } stage3_;
 
     struct Stage4 {
-        std::shared_ptr<ArmorSolver> armor_solver;
-        std::shared_ptr<RestFrame> rest_frame;
-        std::shared_ptr<FrameRateCounter> fps_counter;
-        std::shared_ptr<YawVisualizer> yaw_visualizer;
         std::shared_ptr<TwoVideoLogger> two_video_logger;
+        VisualizerConfig visualizer_config;
 
         std::thread worker;
         std::atomic<bool> idle{true};
@@ -245,9 +267,6 @@ private:
         void start(AutoAimPipelineData& d);
         bool isIdle() const;
         void run();
-
-    private:
-        void drawResults(cv::Mat& image, const AutoAimPipelineData& d);
     } stage4_;
 
     std::thread scheduler_thread_;
