@@ -1,0 +1,190 @@
+cmake_minimum_required(VERSION 3.5)
+project(auto_aim)
+
+# 设置 C++ 标准
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_BUILD_TYPE Release)
+
+# 查找依赖包
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(Threads REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(TBB REQUIRED)
+find_package(angles REQUIRED) # <<--- 确保这一行存在
+
+# ba solver
+find_package(g2o REQUIRED)
+find_package(Sophus REQUIRED)
+find_package(fmt REQUIRED)
+
+find_package(OpenVINO REQUIRED)
+
+#rosidl_generate_interfaces(${PROJECT_NAME}
+#  "msg/SerialData.msg"
+#  "msg/GimbalCommand.msg"
+#)
+
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+#rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
+
+# 查找 MvCameraControl 库
+find_library(MVCAMERA_LIB MvCameraControl PATHS /opt/MVS/lib/64)
+
+# 设置包含目录
+include_directories(
+    ${OpenCV_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/include
+    /opt/MVS/include
+    /opt/ros/humble/include
+    /opt/ros/humble/include/cv_bridge
+    ${sensor_msgs_INCLUDE_DIRS}
+    ${cv_bridge_INCLUDE_DIRS}
+)
+
+# 添加装甲板检测相关的库
+add_library(armor_detector SHARED
+    src/2d_armor_detector/Armor.cpp
+    src/2d_armor_detector/LightBarDetector.cpp
+    src/2d_armor_detector/ArmorDetector.cpp
+    src/2d_armor_detector/ArmorClassifier.cpp
+    src/2d_armor_detector/ArmorTracker.cpp
+    src/2d_armor_detector/UnwarpUtils.cpp
+    # src/2d_armor_detector/YOLOPoseArmorDetector.cpp
+    src/3d_processing/ArmorSolver.cpp
+    src/3d_processing/BallisticSolver.cpp
+    src/3d_processing/RestFrame.cpp
+    src/camera/cameraConnect.cpp  # 添加这一行
+    src/other_input/VideoInput.cpp
+    src/other_input/ImagesInput.cpp
+    src/predictor/PositionPredictor2D.cpp
+    # src/predictor/PredictionTrans.cpp
+    # src/predictor/PositionPredictor3D.cpp
+    src/predictor/PeriodicDataPredictor.cpp
+    src/predictor/RotationMotionModel.cpp
+    src/predictor/AllPredictor.cpp
+    src/predictor/PredictorSwitcher.cpp
+    src/predictor/PredictorMain.cpp
+    # src/predictor/RotationJudge.cpp
+    src/visualizer/DataVisualizer.cpp
+    src/visualizer/RestFrameDraw.cpp
+    src/visualizer/YawVisualizer.cpp
+    src/communication/SharedMemoryClassifier.cpp
+    # src/communication/SharedMemoryYOLOPose.cpp
+    src/communication/Com.cpp
+    src/communication/CRC.cpp
+    src/communication/WatchdogClient.cpp
+    src/communication/HeadIMU.cpp
+    src/utils/FrameRateCounter.cpp
+    src/utils/PerformanceMonitor.cpp
+    src/utils/SimpleDataFilter.cpp
+    src/utils/DataProcessFuncs.cpp
+    src/utils/PeriodFunctions.cpp
+    # EKF
+    # src/EKF/Tracker.cpp
+    # ba solver
+    src/ba_solver/ba_solver.cpp
+    src/ba_solver/graph_optimizer.cpp
+    src/ba_solver/utils.cpp
+    src/logger/TwoVideoLogger.cpp
+    src/logger/MkvWriter.cpp
+    src/RP24_YOLO/OpenvinoInfer.cpp
+    src/RP24_YOLO/RP24_YOLO_Wrapper.cpp
+    src/pipeline/AutoAimPipeline.cpp
+)
+#add_library(crc_lib SHARED
+#    src/nodes/CRC.cpp
+#)
+# 添加可执行文件
+add_executable(armor_detect_node src/nodes/ArmorDetect_Node.cpp)
+#add_executable(com_node src/nodes/Com_Node_New.cpp)
+
+# 为装甲板检测器添加依赖
+target_link_libraries(armor_detector
+    ${OpenCV_LIBS}
+    Eigen3::Eigen
+    rclcpp::rclcpp   # 添加这一行
+    yaml-cpp
+#    "${cpp_typesupport_target}"
+#    crc_lib
+    pthread
+
+    # ba solver
+    cv_bridge::cv_bridge
+    g2o_core
+    g2o_stuff
+    g2o_solver_csparse
+    g2o_csparse_extension
+    g2o_types_slam3d
+    g2o_types_sba
+    g2o_solver_dense
+    cxsparse
+    Sophus::Sophus
+    fmt::fmt
+    udev
+)
+
+# 为装甲板检测节点添加依赖
+target_link_libraries(armor_detect_node
+    armor_detector
+    ${OpenCV_LIBS}
+    ${MVCAMERA_LIB}
+    Eigen3::Eigen
+    pthread
+    rclcpp::rclcpp
+    ${sensor_msgs_LIBRARIES}
+    ${cv_bridge_LIBRARIES}
+#    "${cpp_typesupport_target}"
+    yaml-cpp
+    TBB::tbb
+    openvino::runtime
+)
+
+# 为通信节点添加依赖
+#target_link_libraries(com_node
+#    crc_lib
+#    pthread
+#    rclcpp::rclcpp
+#    "${cpp_typesupport_target}"
+#)
+
+ament_target_dependencies(armor_detector yaml-cpp angles)
+
+ament_target_dependencies(armor_detect_node yaml-cpp)
+
+# 编译选项
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -DNDEBUG -flto -march=native")
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG -Wall -Wextra")
+set(CMAKE_EXE_LINKER_FLAGS "-flto=auto")
+
+# 添加库的路径
+link_directories(/opt/MVS/lib/64)
+
+# 安装
+install(TARGETS
+    armor_detect_node
+#    com_node
+    armor_detector  # 添加这行
+#    crc_lib        # 添加这行
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY
+    launch
+    DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()

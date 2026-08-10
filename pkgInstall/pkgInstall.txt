@@ -1,0 +1,83 @@
+sudo usermod -a -G dialout $USER
+sudo chmod a+rw /dev/ttyACM0
+cd /etc/udev/rules.d
+sudo touch 99-usb-serial.rules
+KERNEL=="ttyACM0", MODE="0666"
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+pip install numpy sysv-ipc opencv-python pyyaml
+pip install ultralytics openvino
+pip install onnxruntime onnxscript openvino-dev
+pip install nncf==2.14.0
+pip install posix_ipc
+
+sudo apt update
+sudo apt install libceres-dev
+
+intel gpu:
+https://www.intel.cn/content/www/cn/zh/support/articles/000005520/graphics.html
+https://dgpu-docs.intel.com/driver/client/overview.html#ubuntu-22.04
+wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | \
+  sudo gpg --yes --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" | \
+  sudo tee /etc/apt/sources.list.d/intel-gpu-jammy.list
+sudo apt update
+sudo apt-get install -y libze-intel-gpu1 libze1 intel-opencl-icd clinfo
+sudo apt-get install -y libze-dev intel-ocloc
+
+- fmt库
+  ```bash
+  sudo apt install libfmt-dev
+  ```
+
+- cmake 3.24
+    cd ~
+    mkdir makeInstall && cd makeInstall
+    mkdir cmake && cd cmake
+    wget https://github.com/Kitware/CMake/releases/download/v3.24.1/cmake-3.24.1-linux-x86_64.tar.gz
+    tar -xvf ./cmake-3.24.1-linux-x86_64.tar.gz
+
+- Sophus库 (G2O库依赖)
+   ```bash
+   cd ~/makeInstall
+   git clone https://github.com/strasdat/Sophus
+   cd Sophus
+修改CMakeLists.txt
+修改
+option(BUILD_SOPHUS_TESTS "Build tests." ON)
+为
+option(BUILD_SOPHUS_TESTS "Build tests." OFF)
+   mkdir build && cd build
+   ~/makeInstall/cmake/cmake-3.24.1-linux-x86_64/bin/cmake ..
+   make -j4
+   sudo make install
+   ```
+- G2O库 (优化装甲板Yaw角度)
+    ```bash
+    cd ~/makeInstall
+    sudo apt install libeigen3-dev libspdlog-dev libsuitesparse-dev qtdeclarative5-dev qt5-qmake libqglviewer-dev-qt5
+    git clone https://github.com/RainerKuemmerle/g2o
+    cd g2o
+    mkdir build && cd build
+    ~/makeInstall/cmake/cmake-3.24.1-linux-x86_64/bin/cmake ..
+    make -j4
+    sudo make install
+    ```
+    sudo vim /etc/ld.so.conf
+      添加一行
+      /usr/local/lib
+    sudo ldconfig
+
+
+视频日志查看查看工具：
+sudo apt install vlc
+
+cd ~/makeInstall
+wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB  
+sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB  
+echo "deb https://apt.repos.intel.com/openvino/2024 ubuntu22 main" | sudo tee /etc/apt/sources.list.d/intel-openvino-2024.list  
+sudo apt update 
+apt-cache search openvino
+sudo apt install openvino-2024.0.0
