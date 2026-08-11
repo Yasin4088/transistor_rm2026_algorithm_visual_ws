@@ -772,11 +772,9 @@ private:
                 result.valid_data.predictor_result.fire_flag);
         }
 
-#if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
         if (result.valid_data.request_com_frame_refresh) {
             com_data_visualize_frame_used = true;
         }
-#endif
 
         publishVisualizerFrames(result.valid_data);
 

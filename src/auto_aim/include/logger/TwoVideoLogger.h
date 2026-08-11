@@ -1,6 +1,5 @@
 #include "logger/MkvWriter.h"
 #include "memory"
-#include "macro/AutoAimMacro.h"
 #include <filesystem>
 #include <chrono>
 
@@ -10,6 +9,8 @@ private:
 
     std::shared_ptr<MkvAllIntraWriter> origin_video_writer;
     std::shared_ptr<MkvAllIntraWriter> info_video_writer;
+    bool log_origin_video_ = false;
+    bool log_result_video_ = false;
 
     std::filesystem::path this_log_folder_path;
     std::filesystem::path origin_video_path;
@@ -27,7 +28,7 @@ private:
     int64_t frame_count = 0;
 
 public:
-    TwoVideoLogger(const std::string& log_folder_str);
+    TwoVideoLogger(const std::string& log_folder_str, bool log_origin_video, bool log_result_video);
 
     ~TwoVideoLogger() {}
 

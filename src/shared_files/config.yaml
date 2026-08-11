@@ -2,8 +2,9 @@
 SAVE_IMG_FREQ : 0 # 0为不保存图片，其他值为保存图片的频率
 SYNC_CAMERA_FPS : true # 定义后主循环帧数将不会超过摄像头实际捕获帧数
 FIX_ENEMY_COLOR : 1 # 0为红色，1为蓝色
-
-
+# FIX_BULLET_VELOCITY : 12.0 # 定义后将覆盖电控传来的发弹初速度（待改）
+LOG_RESULT_VIDEO : false # 定义后将以视频形式记录处理结果
+LOG_ORIGIN_VIDEO : false # 定义后将记录处理的原始画面视频
 
 # SharedMemoryClassifier参数
 CLASSIFIER_SHM_KEY : 0x0250

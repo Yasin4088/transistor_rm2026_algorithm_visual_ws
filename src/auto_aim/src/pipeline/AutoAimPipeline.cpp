@@ -448,11 +448,15 @@ AutoAimPipeline::Stage4::Stage4(std::shared_ptr<YAML::Node> config_file_ptr,
 {
     (void)node;
     visualizer_config = VisualizerConfig::fromYaml(*config_file_ptr);
-#if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
-    if (visualizer_config.enable && visualizer_config.log_video) {
-        two_video_logger = std::make_shared<TwoVideoLogger>(workspace_path / "VideoLog");
+    log_result_video = (*config_file_ptr)["LOG_RESULT_VIDEO"].as<bool>();
+    log_origin_video = (*config_file_ptr)["LOG_ORIGIN_VIDEO"].as<bool>();
+    if (visualizer_config.enable && visualizer_config.log_video &&
+        (log_result_video || log_origin_video)) {
+        two_video_logger = std::make_shared<TwoVideoLogger>(
+            (workspace_path / "VideoLog").string(),
+            log_origin_video,
+            log_result_video);
     }
-#endif
 }
 
 void AutoAimPipeline::Stage4::start(AutoAimPipelineData& d)
@@ -510,7 +514,6 @@ void AutoAimPipeline::Stage4::run()
             d->stage4.visualizer_debug_frame = std::move(debug_frame);
         }
 
-#if (defined LOG_RESULT_VIDEO) || (defined LOG_ORIGIN_VIDEO)
         if (two_video_logger) {
             two_video_logger->updateOriginFrame(d->initial.frame);
             two_video_logger->updateDrewFrame(d->initial.frame);
@@ -522,7 +525,6 @@ void AutoAimPipeline::Stage4::run()
             two_video_logger->writeTwoFrame();
             d->stage4.request_com_frame_refresh = true;
         }
-#endif
 
         if (d->initial.performance_profile) {
             d->initial.performance_profile->stages["stage4_visualize_log"] +=

@@ -253,6 +253,8 @@ private:
     struct Stage4 {
         std::shared_ptr<TwoVideoLogger> two_video_logger;
         VisualizerConfig visualizer_config;
+        bool log_result_video = false;
+        bool log_origin_video = false;
 
         std::thread worker;
         std::atomic<bool> idle{true};
