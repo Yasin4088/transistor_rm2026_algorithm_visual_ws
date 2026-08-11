@@ -103,13 +103,16 @@ public:
         // 原来AutoAimMacro参数迁移，改为运行时配置
         save_img_freq_ = (*config_file_ptr)["SAVE_IMG_FREQ"].as<int>();
         sync_camera_fps_ = (*config_file_ptr)["SYNC_CAMERA_FPS"].as<bool>();
+        fix_enemy_color_ = (*config_file_ptr)["FIX_ENEMY_COLOR"].as<int>();
 
         // 初始化敌方颜色
-#ifdef FIX_ENEMY_COLOR
-        enemy_color_ = (FIX_ENEMY_COLOR == 0) ? "RED" : "BLUE";
-#else
-        enemy_color_ = (*config_file_ptr)["init_enemy_color"].as<std::string>();
-#endif
+        if (fix_enemy_color_ == 0) {
+            enemy_color_ = "RED";
+        } else if (fix_enemy_color_ == 1) {
+            enemy_color_ = "BLUE";
+        } else {
+            enemy_color_ = (*config_file_ptr)["init_enemy_color"].as<std::string>();
+        }
 
         // 初始化子弹速度
 #ifdef FIX_BULLET_VELOCITY
@@ -245,6 +248,7 @@ private:
     // AutoAimMacro参数迁移
     int save_img_freq_ = 0;
     bool sync_camera_fps_ = false;
+    int fix_enemy_color_ = -1;
 
     // MCU 姿态状态
     float last_pitch_rad_mcu_;
@@ -467,9 +471,9 @@ private:
         }
 
         SerialData processed_msg = msg;
-#ifdef FIX_ENEMY_COLOR
-        processed_msg.color = FIX_ENEMY_COLOR;
-#endif
+        if (fix_enemy_color_ == 0 || fix_enemy_color_ == 1) {
+            processed_msg.color = fix_enemy_color_;
+        }
 #ifdef FIX_BULLET_VELOCITY
         processed_msg.bullet_velocity = FIX_BULLET_VELOCITY;
 #endif

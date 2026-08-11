@@ -1,6 +1,8 @@
 # AutoAimMacro参数(测试)
 SAVE_IMG_FREQ : 0 # 0为不保存图片，其他值为保存图片的频率
 SYNC_CAMERA_FPS : true # 定义后主循环帧数将不会超过摄像头实际捕获帧数
+FIX_ENEMY_COLOR : 1 # 0为红色，1为蓝色
+
 
 
 # SharedMemoryClassifier参数

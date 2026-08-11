@@ -6,19 +6,21 @@
 #include <iomanip>
 #include <stdexcept>
 
-#include "macro/AutoAimMacro.h"
-
 namespace {
 
 Params loadDetectorParams(const std::shared_ptr<YAML::Node>& config_file_ptr, std::string* enemy_color_out)
 {
     Params params;
 
-#ifdef FIX_ENEMY_COLOR
-    std::string enemy_color = (FIX_ENEMY_COLOR == 0) ? "RED" : "BLUE";
-#else
-    std::string enemy_color = (*config_file_ptr)["init_enemy_color"].as<std::string>();
-#endif
+    const int fix_enemy_color = (*config_file_ptr)["FIX_ENEMY_COLOR"].as<int>();
+    std::string enemy_color;
+    if (fix_enemy_color == 0) {
+        enemy_color = "RED";
+    } else if (fix_enemy_color == 1) {
+        enemy_color = "BLUE";
+    } else {
+        enemy_color = (*config_file_ptr)["init_enemy_color"].as<std::string>();
+    }
 
     if (enemy_color == "RED") {
         params.enemy_color = Params::RED;
