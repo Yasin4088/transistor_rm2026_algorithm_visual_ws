@@ -15,6 +15,7 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <utility>  // std::swap
 
 #include <opencv2/opencv.hpp>
 #include <cv_bridge/cv_bridge.h>
@@ -719,7 +720,7 @@ private:
         pthread_mutex_lock(&g_mutex);
         if (!g_image.empty()) {
             // 零拷贝交接：swap 换出，不再每帧 clone 一次全图
-            frame.swap(g_image);
+            std::swap(frame, g_image);
             image_used = true;
         }
         pthread_mutex_unlock(&g_mutex);

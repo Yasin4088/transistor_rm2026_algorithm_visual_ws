@@ -1,5 +1,6 @@
 // ImagesInput.cpp
 #include "other_input/ImagesInput.h"
+#include <utility>  // std::swap
 
 // 使用在camera.cpp中定义的全局变量
 extern bool g_bExit;
@@ -65,7 +66,7 @@ void* ImagesInput::workThread(void* pThis) {
 
         // 更新全局图像
         pthread_mutex_lock(&g_mutex);
-        g_image.swap(frame);  // 零拷贝交接：frame 持有自有内存（imread 分配）
+        std::swap(g_image, frame);  // 零拷贝交接：frame 持有自有内存（imread 分配）
         image_used = false;
         pthread_mutex_unlock(&g_mutex);
         

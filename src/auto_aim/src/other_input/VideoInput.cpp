@@ -1,5 +1,6 @@
 // VideoInput.cpp
 #include "other_input/VideoInput.h"
+#include <utility>  // std::swap
 
 // 使用在camera.cpp中定义的全局变量
 extern bool g_bExit;
@@ -66,7 +67,7 @@ void* VideoInput::workThread(void* pThis) {
             usleep(1000);
         }
         pthread_mutex_lock(&g_mutex);
-        g_image.swap(frame);  // 零拷贝交接：frame 持有自有内存（VideoCapture/imread 分配）
+        std::swap(g_image, frame);  // 零拷贝交接：frame 持有自有内存（VideoCapture/imread 分配）
         image_used = false;
         pthread_mutex_unlock(&g_mutex);
         
