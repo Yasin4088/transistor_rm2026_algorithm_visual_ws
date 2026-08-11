@@ -718,7 +718,8 @@ private:
         }
         pthread_mutex_lock(&g_mutex);
         if (!g_image.empty()) {
-            frame = g_image.clone();
+            // 零拷贝交接：swap 换出，不再每帧 clone 一次全图
+            frame.swap(g_image);
             image_used = true;
         }
         pthread_mutex_unlock(&g_mutex);

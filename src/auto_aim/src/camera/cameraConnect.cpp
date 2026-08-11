@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <cstring>
 #include <chrono>
+#include <utility>  // std::swap
 
 using namespace std::chrono;
 
@@ -226,14 +227,12 @@ void Camera::grabLoop() {
                 if (stImageInfo.nFrameLen > 0) {
                     cv::Mat processedImage;
                     if (processImage(pData, stImageInfo, processedImage)) {
-                        // 检查图像是否有变化
-                        if (isImageChanged(processedImage)) {
-                            lastValidImage = processedImage.clone();
-                            lastSuccessTime = steady_clock::now();
-                        }
-                        // 更新图像
+                        // 收到有效图像即更新成功时间（用于断流重连判定）
+                        lastSuccessTime = steady_clock::now();
+                        // 零拷贝交接：processedImage 始终持有自有内存（见 processImage），
+                        // 锁内 swap 换出，避免每帧一次全图 clone
                         pthread_mutex_lock(&g_mutex);
-                        g_image = processedImage.clone();
+                        std::swap(g_image, processedImage);
                         image_used = false;
                         pthread_mutex_unlock(&g_mutex);
                     }
@@ -420,37 +419,6 @@ void Camera::disconnectDevice() {
     std::cout << "Device disconnected." << std::endl;
 }
 
-bool Camera::isImageChanged(const cv::Mat& newImage) {
-    if (lastValidImage.empty() && newImage.empty()) {
-        return false; // 如果一直没有有效图像，则认为没有变化
-    }
-
-    if (lastValidImage.empty() || newImage.empty()) {
-        return true; // 如果之前没有有效图像，则认为有变化
-    }
-    
-    if (lastValidImage.size() != newImage.size()) {
-        return true; // 图像尺寸不同，认为有变化
-    }
-    
-    if (newImage.rows == 0 && newImage.cols == 0) {
-        return false; // 图像大小均为0，认为没有变化
-    }
-
-    // 逐像素比较，如果所有像素都相同，则认为图像没有变化
-    cv::Mat diff;
-    cv::absdiff(lastValidImage, newImage, diff);
-    
-    // 如果diff中有非零元素，说明图像有变化
-    cv::Scalar sumDiff = cv::sum(diff);
-    for (int i = 0; i < sumDiff.channels; ++i) {
-        if (sumDiff[i] != 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // 其他方法保持不变，只需要进行小的调整
 void Camera::parseIp(const std::string& ip, unsigned int& parsedIp) {
     int parts[4];
@@ -595,14 +563,19 @@ bool Camera::processImage(unsigned char* pData, MV_FRAME_OUT_INFO_EX& stImageInf
             if (stImageInfo.enPixelType == PixelType_Gvsp_RGB8_Packed) {
                 cv::cvtColor(img, outputImage, cv::COLOR_RGB2BGR);
             } else {
-                outputImage = img;
+                // 必须持有自有内存：outputImage 会经 swap 交给 g_image，
+                // 而 img 只是包着 SDK 缓冲 pData，下一帧取流会被覆盖
+                img.copyTo(outputImage);
             }
             return true;
         }
         
-        case PixelType_Gvsp_Mono8:
-            outputImage = cv::Mat(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC1, pData);
+        case PixelType_Gvsp_Mono8: {
+            // 同上，必须持有自有内存
+            cv::Mat img(stImageInfo.nHeight, stImageInfo.nWidth, CV_8UC1, pData);
+            img.copyTo(outputImage);
             return true;
+        }
             
         default:
             std::cerr << "Unsupported pixel format: " << stImageInfo.enPixelType << std::endl;

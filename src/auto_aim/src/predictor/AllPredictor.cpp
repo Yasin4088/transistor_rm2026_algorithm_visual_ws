@@ -45,8 +45,9 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
             }
         );
         if (it != classifyResults.end()) {
-            auto chosen_armor = *it;
-            AimResult solve_armor_result = chosen_armor.solve_armor_result;
+            // 只读引用，避免按值拷贝 ArmorResult（内含多个 vector/Mat）
+            const ArmorResult& chosen_armor = *it;
+            const AimResult& solve_armor_result = chosen_armor.solve_armor_result;
             armor_is_large = chosen_armor.is_large;
 
             is_reset = false;

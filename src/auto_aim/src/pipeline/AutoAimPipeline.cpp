@@ -326,7 +326,8 @@ void AutoAimPipeline::Stage2::run()
             d->initial.roll);
         rest_frame->updateCamPosition(0, 0, 0);
 
-        for (ArmorResult classify_result : d->stage1.classify_results) {
+        // 用引用遍历，避免每块装甲板按值拷贝一次 ArmorResult（内含多个 vector/Mat）
+        for (ArmorResult& classify_result : d->stage1.classify_results) {
             AimResult solve_armor_result =
                 armor_solver->solveArmor(classify_result, d->initial.pitch, d->initial.yaw);
             cv::Point3f rest_frame_pos = rest_frame->pnpToWorldP3f(solve_armor_result.position);
@@ -497,7 +498,9 @@ void AutoAimPipeline::Stage4::run()
 
         if (visualizer_config.enable && visualizer_config.publish_topics) {
             AutoAimVisualizerDebugFrame debug_frame;
-            debug_frame.frame = d->initial.frame.clone();
+            // 浅拷贝即可：stage3 之后没有任何代码再写 initial.frame，
+            // 发布/录制都只读；cv::Mat 引用计数共享，避免每帧一次全图 clone
+            debug_frame.frame = d->initial.frame;
             debug_frame.node_start_time = d->initial.node_start_time;
             debug_frame.bullet_velocity = d->initial.bullet_velocity;
             debug_frame.enemy_color = d->initial.enemy_color;

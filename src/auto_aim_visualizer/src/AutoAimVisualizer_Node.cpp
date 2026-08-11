@@ -230,7 +230,9 @@ private:
     void handleRawFrame(const sensor_msgs::msg::Image::ConstSharedPtr& msg)
     {
         try {
-            latest_raw_frame_ = cv_bridge::toCvCopy(msg, "bgr8")->image;
+            // toCvShare：零拷贝引用消息数据（refcount 保持消息存活），
+            // 发布端编码即 bgr8，无需转换；替代 toCvCopy 的一次全图拷贝
+            latest_raw_frame_ = cv_bridge::toCvShare(msg, "bgr8")->image;
         } catch (const cv_bridge::Exception& e) {
             RCLCPP_WARN(this->get_logger(), "Failed to convert raw frame: %s", e.what());
         }
@@ -243,9 +245,10 @@ private:
         }
 
         if (visualizer_config_.draw.main_result) {
-            cv::Mat display = latest_raw_frame_.clone();
-            drawMainResult(display, *msg);
-            cv::imshow("Armor Detection", display);
+            // 直接在 latest_raw_frame_ 上画：回调串行执行、无并发读者，
+            // 省掉一次全图 clone；imshow 内部会复制到窗口缓冲
+            drawMainResult(latest_raw_frame_, *msg);
+            cv::imshow("Armor Detection", latest_raw_frame_);
         }
 
         if (visualizer_config_.draw.yaw_curve) {

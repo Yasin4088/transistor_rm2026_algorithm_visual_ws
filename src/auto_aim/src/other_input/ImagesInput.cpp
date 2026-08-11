@@ -65,7 +65,7 @@ void* ImagesInput::workThread(void* pThis) {
 
         // 更新全局图像
         pthread_mutex_lock(&g_mutex);
-        g_image = frame.clone();
+        g_image.swap(frame);  // 零拷贝交接：frame 持有自有内存（imread 分配）
         image_used = false;
         pthread_mutex_unlock(&g_mutex);
         

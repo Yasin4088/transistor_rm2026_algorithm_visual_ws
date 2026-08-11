@@ -66,7 +66,7 @@ void* VideoInput::workThread(void* pThis) {
             usleep(1000);
         }
         pthread_mutex_lock(&g_mutex);
-        g_image = frame.clone();
+        g_image.swap(frame);  // 零拷贝交接：frame 持有自有内存（VideoCapture/imread 分配）
         image_used = false;
         pthread_mutex_unlock(&g_mutex);
         
