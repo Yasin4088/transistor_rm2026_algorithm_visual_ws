@@ -1,3 +1,8 @@
+# AutoAimMacro参数(测试)
+SAVE_IMG_FREQ : 0
+
+
+
 # SharedMemoryClassifier参数
 CLASSIFIER_SHM_KEY : 0x0250
 classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/model.xml"
@@ -33,7 +38,7 @@ visualizer:
   publish_topics: true # 是否发布话题
   log_video: true # 是否录制视频
 
-frame_rate : 70.0   # fps
+frame_rate : 80.0   # fps
 serial_delay_time : 30.0 # ms           电控传来的信息相对相机画面快的时间，将对电控信息再延迟这个时间以同步两者
 extra_predict_time : 0.170 # s          除了弹丸飞行时间以外的需要预测器补偿的总时间
 

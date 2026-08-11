@@ -100,6 +100,9 @@ public:
             performance_monitor_report_interval);
 
         // 参数初始化
+        // 原来AutoAimMacro参数迁移，改为运行时配置
+        save_img_freq_ = (*config_file_ptr)["SAVE_IMG_FREQ"].as<int>();
+
         // 初始化敌方颜色
 #ifdef FIX_ENEMY_COLOR
         enemy_color_ = (FIX_ENEMY_COLOR == 0) ? "RED" : "BLUE";
@@ -237,6 +240,7 @@ private:
     // 时间与基础参数
     std::chrono::time_point<std::chrono::steady_clock> node_start_time;
     float bullet_velocity_;
+    int save_img_freq_ = 0;
 
     // MCU 姿态状态
     float last_pitch_rad_mcu_;
@@ -269,9 +273,7 @@ private:
     std::string enemy_color_;
     Params params_;
 
-#ifdef SAVE_IMG_FREQ
     long long frame_count_ = 0;
-#endif
 
     cv::Point2f ground_stable_point;
     float yaw_rad_to_x_pixel_ratio;
@@ -707,17 +709,17 @@ private:
         headIMUInfos.last_auto_aim_switch = auto_aim_switch;
 
         if (!frame.empty()) {
-#ifdef SAVE_IMG_FREQ
-            frame_count_ += 1;
-            if (frame_count_ % SAVE_IMG_FREQ == 0 && frame_count_ / SAVE_IMG_FREQ < 2000) {
-                fs::create_directories("camera_images");
-                std::ostringstream filename;
-                filename << "camera_images/"
-                         << std::setw(5) << std::setfill('0') << (frame_count_ / SAVE_IMG_FREQ)
-                         << ".jpg";
-                cv::imwrite(filename.str(), frame);
+            if (save_img_freq_ > 0) {
+                frame_count_ += 1;
+                if (frame_count_ % save_img_freq_ == 0 && frame_count_ / save_img_freq_ < 2000) {
+                    fs::create_directories("camera_images");
+                    std::ostringstream filename;
+                    filename << "camera_images/"
+                             << std::setw(5) << std::setfill('0') << (frame_count_ / save_img_freq_)
+                             << ".jpg";
+                    cv::imwrite(filename.str(), frame);
+                }
             }
-#endif
 
             AutoAimPipelineData::InitialData initial;
             initial.frame = std::move(frame);
