@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <execution>
 #include <thread>
-#include "macro/AutoAimMacro.h"
 
 
 /**
@@ -55,6 +54,7 @@ private:
     Params::EnemyColor enemy_color;      // 敌方颜色
     rclcpp::Node* node;                  // 用于打印的节点
     std::shared_ptr<YAML::Node> config_file_ptr; // 配置文件
+    bool show_windows_ = false;
     // 灯条检测参数
     float mean_color_diff_THRESHOLD_RED;
     float mean_color_diff_THRESHOLD_BLUE;

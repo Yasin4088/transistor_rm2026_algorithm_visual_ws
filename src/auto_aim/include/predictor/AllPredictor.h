@@ -18,7 +18,6 @@
 #include "utils/SimpleDataFilter.h"
 #include "predictor/RotationMotionModel.h"
 #include "predictor/PredictorSwitcher.h"
-#include "macro/AutoAimMacro.h"
 
 struct PredictorResult {
     bool reset = true;
@@ -56,11 +55,13 @@ public:
     armor_solver_(armor_solver_), ballistic_solver_(ballistic_solver_),
     rest_frame_(rest_frame_), fps_counter(fps_counter), armor_class(armor_class) {
         // 初始化参数
-#ifdef FIX_BULLET_VELOCITY
-        bullet_velocity_ = FIX_BULLET_VELOCITY;
-#else
-        bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
-#endif
+        const float fix_bullet_velocity = (*config_file_ptr)["FIX_BULLET_VELOCITY"]
+            ? (*config_file_ptr)["FIX_BULLET_VELOCITY"].as<float>() : -1.0f;
+        if (fix_bullet_velocity >= 0.0f) {
+            bullet_velocity_ = fix_bullet_velocity;
+        } else {
+            bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
+        }
         
         // yaw_rad_to_x_pixel_ratio = (*config_file_ptr)["yaw_rad_to_x_pixel_ratio"].as<float>(); 
         // pitch_rad_to_y_pixel_ratio = (*config_file_ptr)["pitch_rad_to_y_pixel_ratio"].as<float>(); 
@@ -72,7 +73,16 @@ public:
 
         last_com_time = std::chrono::steady_clock::now();
 
-        oscilloscope_common_ = std::make_shared<Oscilloscope>(640, 480, "Common Debug Oscilloscope "+std::to_string(armor_class), 2);
+        const bool show_windows =
+            (*config_file_ptr)["SHOW_WINDOWS"] ? (*config_file_ptr)["SHOW_WINDOWS"].as<bool>() : false;
+        oscilloscope_common_ = std::make_shared<Oscilloscope>(
+            640,
+            480,
+            "Common Debug Oscilloscope " + std::to_string(armor_class),
+            2,
+            cv::Scalar(0, 0, 0),
+            cv::Scalar(0, 255, 0),
+            show_windows);
         oscilloscope_common_ -> setScale(2.0);
         oscilloscope_common_ -> setOffset(-1.0);
 

@@ -25,6 +25,8 @@ std::pair<string, string> convertOnnxToIR(const string& onnx_path) {
 
 RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node, string model_path, string device) 
     : config_file_ptr(config_file_ptr), node(node) {
+    fix_armor_class_ =
+        (*config_file_ptr)["FIX_ARMOR_CLASS"] ? (*config_file_ptr)["FIX_ARMOR_CLASS"].as<int>() : -1;
 
     // -------------------- Step 1: 模型转换（ONNX -> IR） --------------------
     // 检查模型文件是否存在
@@ -314,9 +316,9 @@ vector<ArmorResult> RP24YOLOWrapper::classifyAndTrack(
         Armor& armor = armors[i];
         int number = class_map[rp24_classes[i]];
         bool is_large = big_map[rp24_classes[i]];
-#ifdef FIX_ARMOR_CLASS
-        number = FIX_ARMOR_CLASS;
-#endif
+        if (fix_armor_class_ >= 0) {
+            number = fix_armor_class_;
+        }
         bool not_slant = true;
         float confidence = armor.confidence;
 

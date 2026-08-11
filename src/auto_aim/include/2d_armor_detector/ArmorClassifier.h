@@ -22,7 +22,6 @@
 #include <thread>
 #include <atomic>
 #include "2d_armor_detector/ArmorTracker.h"
-#include "macro/AutoAimMacro.h"
 
 namespace fs = std::filesystem;
 
@@ -44,6 +43,8 @@ private:
     float CLASSIFY_THRESHOLD;
     int INPUT_HEIGHT;
     int INPUT_WIDTH;
+    int filter_armor_class_mask_ = 0;
+    int fix_armor_class_ = -1;
 
     fs::path ws_dir_path; // 用于保存图片路径
     

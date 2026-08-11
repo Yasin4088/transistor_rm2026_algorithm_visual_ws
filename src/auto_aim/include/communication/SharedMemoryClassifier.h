@@ -12,7 +12,6 @@
 #include <fcntl.h>           // for O_CREAT, O_EXCL
 #include <semaphore.h>       // POSIX 信号量头文件
 #include <yaml-cpp/yaml.h>
-#include "macro/AutoAimMacro.h"
 
 class SharedMemoryClassifier {
 public:
@@ -41,6 +40,7 @@ private:
     SharedData* shared_data_;
     const size_t MAX_IMAGES = 100;
     int CLASSIFIER_SHM_KEY; // 共享内存键值
+    bool show_windows_ = false;
     bool python_available_ = true;   // Python 端是否可用（首次超时后置 false）
     std::chrono::steady_clock::time_point last_retry_;  // 上次重试探测时间
 

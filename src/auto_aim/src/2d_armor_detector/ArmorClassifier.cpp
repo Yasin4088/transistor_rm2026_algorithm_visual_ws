@@ -16,6 +16,10 @@ ArmorClassifier::ArmorClassifier(std::shared_ptr<YAML::Node> config_file_ptr, rc
     CLASSIFY_THRESHOLD = (*config_file_ptr)["CLASSIFY_THRESHOLD"].as<float>();
     INPUT_HEIGHT = (*config_file_ptr)["INPUT_HEIGHT"].as<int>();
     INPUT_WIDTH = (*config_file_ptr)["INPUT_WIDTH"].as<int>();
+    filter_armor_class_mask_ =
+        (*config_file_ptr)["FILTER_ARMOR_CLASS"] ? (*config_file_ptr)["FILTER_ARMOR_CLASS"].as<int>() : 0;
+    fix_armor_class_ =
+        (*config_file_ptr)["FIX_ARMOR_CLASS"] ? (*config_file_ptr)["FIX_ARMOR_CLASS"].as<int>() : -1;
 
     shm_python_classifier = std::make_shared<SharedMemoryClassifier>(config_file_ptr);
     armor_tracker = std::make_shared<ArmorTracker>(config_file_ptr, node);
@@ -145,15 +149,12 @@ std::vector<ArmorResult> ArmorClassifier::classify(
         bool not_slant = true;
 
 
-#ifdef FILTER_ARMOR_CLASS
-        if ((FILTER_ARMOR_CLASS >> current_number) & 0x01 == 1) {
+        if ((((filter_armor_class_mask_ >> current_number) & 0x01) == 1)) {
             is_ture_armor = false;
         }
-#endif
-
-#ifdef FIX_ARMOR_CLASS
-        current_number = FIX_ARMOR_CLASS;
-#endif
+        if (fix_armor_class_ >= 0) {
+            current_number = fix_armor_class_;
+        }
 
         if (is_ture_armor) {
             bool is_large = is_large_probability > IS_LARGE_THRESHOLD;

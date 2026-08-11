@@ -12,7 +12,6 @@
 #include <opencv2/opencv.hpp>
 #include <thread>
 #include <utility>
-#include "macro/AutoAimMacro.h"
 
 class RP24YOLOWrapper {
 public:
@@ -177,6 +176,7 @@ private:
     int class_map[9] = {5, 0, 1, 2, 3, 4, 6, 7, 7};
     bool big_map[9] = {false, true, false, false, false, false, false, false, true};
     std::shared_ptr<ArmorTracker> armor_tracker;
+    int fix_armor_class_ = -1;
 };
 
 #endif  // RP24_YOLO_WRAPPER_H

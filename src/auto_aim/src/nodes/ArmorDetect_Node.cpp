@@ -33,7 +33,6 @@
 #include "communication/Com.h"
 #include "communication/HeadIMU.h"
 #include "communication/WatchdogClient.h"
-#include "macro/AutoAimMacro.h"
 #include "other_input/ImagesInput.h"
 #include "other_input/VideoInput.h"
 #include "pipeline/AutoAimPipeline.h"
@@ -104,6 +103,14 @@ public:
         save_img_freq_ = (*config_file_ptr)["SAVE_IMG_FREQ"].as<int>();
         sync_camera_fps_ = (*config_file_ptr)["SYNC_CAMERA_FPS"].as<bool>();
         fix_enemy_color_ = (*config_file_ptr)["FIX_ENEMY_COLOR"].as<int>();
+        fix_bullet_velocity_ = (*config_file_ptr)["FIX_BULLET_VELOCITY"]
+            ? (*config_file_ptr)["FIX_BULLET_VELOCITY"].as<float>() : -1.0f;
+        use_video_ = (*config_file_ptr)["USE_VIDEO"] ? (*config_file_ptr)["USE_VIDEO"].as<bool>() : false;
+        use_images_ = (*config_file_ptr)["USE_IMAGES"] ? (*config_file_ptr)["USE_IMAGES"].as<bool>() : false;
+        debug_code_enabled_ = (*config_file_ptr)["DEBUG_CODE"] ? (*config_file_ptr)["DEBUG_CODE"].as<bool>() : false;
+        if (use_video_ && use_images_) {
+            RCLCPP_WARN(this->get_logger(), "USE_VIDEO and USE_IMAGES are both true, video input will be used.");
+        }
 
         // 初始化敌方颜色
         if (fix_enemy_color_ == 0) {
@@ -115,25 +122,27 @@ public:
         }
 
         // 初始化子弹速度
-#ifdef FIX_BULLET_VELOCITY
-        bullet_velocity_ = FIX_BULLET_VELOCITY;
-#else
-        bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
-#endif
+        if (fix_bullet_velocity_ >= 0.0f) {
+            bullet_velocity_ = fix_bullet_velocity_;
+        } else {
+            bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
+        }
 
-        // 输入源初始化
-#ifdef USE_VIDEO
-        video_input_ = std::make_shared<VideoInput>(ws_dir_path / (*config_file_ptr)["video_relative_path"].as<std::string>());
-#else
-#ifdef USE_IMAGES
-        images_input_ = std::make_shared<ImagesInput>(ws_dir_path / (*config_file_ptr)["images_relative_path"].as<std::string>());
-#else
-        camera_ = std::make_shared<Camera>((*config_file_ptr)["cam_ip"].as<std::string>(), (*config_file_ptr)["pc_ip"].as<std::string>());
-        camera_->setExposureTime((*config_file_ptr)["camera_ExposureTime"].as<float>());
-        camera_->setGain((*config_file_ptr)["camera_Gain"].as<float>());
-        camera_->start();
-#endif
-#endif
+        // 输入源初始化（优先级：video > images > camera）
+        if (use_video_) {
+            video_input_ = std::make_shared<VideoInput>(
+                (ws_dir_path / (*config_file_ptr)["video_relative_path"].as<std::string>()).string());
+        } else if (use_images_) {
+            images_input_ = std::make_shared<ImagesInput>(
+                (ws_dir_path / (*config_file_ptr)["images_relative_path"].as<std::string>()).string());
+        } else {
+            camera_ = std::make_shared<Camera>(
+                (*config_file_ptr)["cam_ip"].as<std::string>(),
+                (*config_file_ptr)["pc_ip"].as<std::string>());
+            camera_->setExposureTime((*config_file_ptr)["camera_ExposureTime"].as<float>());
+            camera_->setGain((*config_file_ptr)["camera_Gain"].as<float>());
+            camera_->start();
+        }
 
         // 自瞄参数初始化
         // 根据相机内参自动提取
@@ -200,9 +209,9 @@ public:
         watchdog_client->feed();
         last_feed_dog_time = std::chrono::steady_clock::now();
 
-#ifdef DEBUG_CODE
-        debug_code();
-#endif
+        if (debug_code_enabled_) {
+            debug_code();
+        }
 
         // 主线程创建
         main_loop_thread_ = std::thread(std::bind(&ArmorDetectNode::main_loop_func, this));
@@ -249,6 +258,10 @@ private:
     int save_img_freq_ = 0;
     bool sync_camera_fps_ = false;
     int fix_enemy_color_ = -1;
+    float fix_bullet_velocity_ = -1.0f;
+    bool use_video_ = false;
+    bool use_images_ = false;
+    bool debug_code_enabled_ = false;
 
     // MCU 姿态状态
     float last_pitch_rad_mcu_;
@@ -474,9 +487,9 @@ private:
         if (fix_enemy_color_ == 0 || fix_enemy_color_ == 1) {
             processed_msg.color = fix_enemy_color_;
         }
-#ifdef FIX_BULLET_VELOCITY
-        processed_msg.bullet_velocity = FIX_BULLET_VELOCITY;
-#endif
+        if (fix_bullet_velocity_ >= 0.0f) {
+            processed_msg.bullet_velocity = fix_bullet_velocity_;
+        }
 
         float current_pitch_;
         float current_yaw_;
@@ -697,15 +710,12 @@ private:
         const auto performance_start_time = std::chrono::steady_clock::now();
         cv::Mat frame;
 
-        bool should_sync_camera_fps = sync_camera_fps_;
-#if defined(USE_VIDEO) || defined(USE_IMAGES)
-        should_sync_camera_fps = true;
-#endif
+        bool should_sync_camera_fps = sync_camera_fps_ || use_video_ || use_images_;
         if (should_sync_camera_fps) {
             while (image_used && !g_bExit) {
                 usleep(1000);
             }
-        }//改为用if语句判断
+        }
         pthread_mutex_lock(&g_mutex);
         if (!g_image.empty()) {
             frame = g_image.clone();

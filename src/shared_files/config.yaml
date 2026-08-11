@@ -1,18 +1,25 @@
-# AutoAimMacro参数(测试)
+# 原AutoAimMacro参数
 SAVE_IMG_FREQ : 0 # 0为不保存图片，其他值为保存图片的频率
 SYNC_CAMERA_FPS : true # 定义后主循环帧数将不会超过摄像头实际捕获帧数
 FIX_ENEMY_COLOR : 1 # 0为红色，1为蓝色
-# FIX_BULLET_VELOCITY : 12.0 # 定义后将覆盖电控传来的发弹初速度（待改）
+FIX_BULLET_VELOCITY : -1.0 # >=0时强制覆盖电控弹速；<0表示不强制覆盖
 LOG_RESULT_VIDEO : false # 定义后将以视频形式记录处理结果
 LOG_ORIGIN_VIDEO : false # 定义后将记录处理的原始画面视频
+
+USE_VIDEO : true # 使用视频输入
+USE_IMAGES : false # 使用图片集输入
+DEBUG_CODE : false # 是否在初始化后运行debug代码
+# SHOW_WINDOWS : true # 是否显示调试窗口（被分离的可视化模块参数设置覆盖）
+FILTER_ARMOR_CLASS : 0 # 装甲板类别过滤掩码，0表示不过滤（如0b00000001过滤0号类别）
+FIX_ARMOR_CLASS : -1 # 强制装甲板类别，-1表示不强制，0~7表示强制为对应类别
 
 # SharedMemoryClassifier参数
 CLASSIFIER_SHM_KEY : 0x0250
 classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/model.xml"
 
-use_RP24_YOLO : true
+use_RP24_YOLO : false
 RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
-RP24_YOLO_device : "GPU"
+RP24_YOLO_device : "CPU"
 
 # ArmorDetect_Node 参数
 init_enemy_color : "BLUE" # 初始敌方颜色，连接至电控后会自动获取敌方颜色并覆盖此值

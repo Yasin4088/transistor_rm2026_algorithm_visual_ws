@@ -6,10 +6,12 @@ Oscilloscope::Oscilloscope(int w, int h,
                            const std::string& name,
                            size_t init_layer_num,
                            cv::Scalar bg_color,
-                           cv::Scalar wf_color)
+                           cv::Scalar wf_color,
+                           bool show_windows)
     : width(w), height(h), scale(1.0f), offset(0.0f), 
       window_name(name), background_color(bg_color),
-      layer_num(init_layer_num) // 修正：初始化layer_num为init_layer_num
+      layer_num(init_layer_num), // 修正：初始化layer_num为init_layer_num
+      show_windows_(show_windows)
 {
     // 初始化显示图像
     data_displays.resize(layer_num);
@@ -92,10 +94,11 @@ void Oscilloscope::update() {
 
 // 显示窗口
 void Oscilloscope::show() {
-#ifdef SHOW_WINDOWS
+    if (!show_windows_) {
+        return;
+    }
     cv::imshow(window_name, display);
     cv::waitKey(1);
-#endif
 }
 
 // 修改 setScale，更新缩放因子后立即重绘

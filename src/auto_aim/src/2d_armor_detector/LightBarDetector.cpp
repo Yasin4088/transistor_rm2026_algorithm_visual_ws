@@ -270,6 +270,7 @@ LightBarDetector::LightBarDetector(const Params& params, std::shared_ptr<YAML::N
         THRES_MAX_COLOR_RED = (*config_file_ptr)["THRES_MAX_COLOR_RED"].as<int>(); 
         THRES_MAX_COLOR_BLUE = (*config_file_ptr)["THRES_MAX_COLOR_BLUE"].as<int>(); 
         light_bar_max_angle = (*config_file_ptr)["light_bar_max_angle"].as<float>();
+        show_windows_ = (*config_file_ptr)["SHOW_WINDOWS"] ? (*config_file_ptr)["SHOW_WINDOWS"].as<bool>() : false;
     }
 
 void LightBarDetector::setEnemyColor(int color) {
@@ -470,12 +471,12 @@ void LightBarDetector::detectLights(cv::Mat& img) {
     }
     //cv::cvtColor(binary_img, img, cv::COLOR_GRAY2BGR);
 
-#ifdef SHOW_WINDOWS
-    // cv::imshow("Light Bar Debug: binary_img", binary_img);
-    // cv::imshow("Light Bar Debug: color_diff", color_diff);
-    // cv::imshow("Light Bar Debug: gray_img", gray_img);
-    // cv::imshow("Light Bar Debug: subtract_gray_img", subtract_gray_img);
-#endif
+    if (show_windows_) {
+        // cv::imshow("Light Bar Debug: binary_img", binary_img);
+        // cv::imshow("Light Bar Debug: color_diff", color_diff);
+        // cv::imshow("Light Bar Debug: gray_img", gray_img);
+        // cv::imshow("Light Bar Debug: subtract_gray_img", subtract_gray_img);
+    }
 }
 
 cv::Mat LightBarDetector::binaryImg(const cv::Mat& img) {

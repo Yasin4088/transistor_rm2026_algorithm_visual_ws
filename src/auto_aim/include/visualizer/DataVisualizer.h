@@ -8,7 +8,6 @@
 #include <mutex>
 #include <string>
 #include <algorithm>
-#include "macro/AutoAimMacro.h"
 
 class Oscilloscope {
 private:
@@ -30,6 +29,7 @@ private:
     cv::Scalar background_color; // 背景颜色
     size_t layer_num;
     uint32_t rolling_speed = 1;
+    bool show_windows_ = false;
 
 public:
     // 构造函数
@@ -37,7 +37,8 @@ public:
                  const std::string& name = "Oscilloscope",
                  size_t init_layer_num = 1,
                  cv::Scalar bg_color = cv::Scalar(0, 0, 0),
-                 cv::Scalar wf_color = cv::Scalar(0, 255, 0));
+                 cv::Scalar wf_color = cv::Scalar(0, 255, 0),
+                 bool show_windows = false);
 
     // 添加数据点
     void addDataPoint(float value, size_t layer_index = 0, int point_size = 1);
