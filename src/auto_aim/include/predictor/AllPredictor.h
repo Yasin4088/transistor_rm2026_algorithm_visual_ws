@@ -55,26 +55,25 @@ public:
     armor_solver_(armor_solver_), ballistic_solver_(ballistic_solver_),
     rest_frame_(rest_frame_), fps_counter(fps_counter), armor_class(armor_class) {
         // 初始化参数
-        const float fix_bullet_velocity = (*config_file_ptr)["FIX_BULLET_VELOCITY"]
-            ? (*config_file_ptr)["FIX_BULLET_VELOCITY"].as<float>() : -1.0f;
+        const YAML::Node& macro_cfg = (*config_file_ptr)["auto_aim_macro"];
+        const float fix_bullet_velocity = macro_cfg["control"]["fix_bullet_velocity"].as<float>();
         if (fix_bullet_velocity >= 0.0f) {
             bullet_velocity_ = fix_bullet_velocity;
         } else {
-            bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
+            bullet_velocity_ = (*config_file_ptr)["armor_detect_node"]["ballistic"]["bullet_velocity"].as<float>();
         }
         
         // yaw_rad_to_x_pixel_ratio = (*config_file_ptr)["yaw_rad_to_x_pixel_ratio"].as<float>(); 
         // pitch_rad_to_y_pixel_ratio = (*config_file_ptr)["pitch_rad_to_y_pixel_ratio"].as<float>(); 
-        const YAML::Node& camera_matrix_Node = (*config_file_ptr)["camera_matrix"];
+        const YAML::Node& camera_matrix_Node = (*config_file_ptr)["solver"]["camera_calibration"]["camera_matrix"];
         yaw_rad_to_x_pixel_ratio = camera_matrix_Node[0][0].as<float>(); 
         pitch_rad_to_y_pixel_ratio = camera_matrix_Node[1][1].as<float>(); 
 
-        reset_predictor_time = (*config_file_ptr)["reset_predictor_time"].as<float>(); 
+        reset_predictor_time = (*config_file_ptr)["predictor"]["reset_predictor_time"].as<float>(); 
 
         last_com_time = std::chrono::steady_clock::now();
 
-        const bool show_windows =
-            (*config_file_ptr)["SHOW_WINDOWS"] ? (*config_file_ptr)["SHOW_WINDOWS"].as<bool>() : false;
+        const bool show_windows = macro_cfg["debug"]["show_windows"].as<bool>();
         oscilloscope_common_ = std::make_shared<Oscilloscope>(
             640,
             480,
@@ -88,20 +87,27 @@ public:
 
         predictor_switcher_ = std::make_shared<PredictorSwitcher>(config_file_ptr, node);
 
-        RMM_fire_control_data.after_target_change_ceasefire_ms = (*config_file_ptr)["after_target_change_ceasefire_ms"].as<int>();
-        RMM_fire_control_data.before_target_change_ceasefire_ms = (*config_file_ptr)["before_target_change_ceasefire_ms"].as<int>();
-        RMM_fire_control_data.aim_center_vyaw_lower_threshold = (*config_file_ptr)["aim_center_vyaw_lower_threshold"].as<float>();
-        RMM_fire_control_data.aim_center_vyaw_upper_threshold = (*config_file_ptr)["aim_center_vyaw_upper_threshold"].as<float>();
-        RMM_fire_control_data.aim_center_yaw_bias_expand = (*config_file_ptr)["aim_center_yaw_bias_expand"].as<float>();
-        RMM_fire_control_data.low_vyaw_change_target_delta_yaw_threshold = M_PI / 180.0 * (*config_file_ptr)["low_vyaw_change_target_delta_yaw_threshold_degree"].as<float>();
-        RMM_fire_control_data.low_vyaw_threshold = (*config_file_ptr)["low_vyaw_threshold"].as<float>();
+        RMM_fire_control_data.after_target_change_ceasefire_ms =
+            (*config_file_ptr)["predictor"]["fire_control"]["after_target_change_ceasefire_ms"].as<int>();
+        RMM_fire_control_data.before_target_change_ceasefire_ms =
+            (*config_file_ptr)["predictor"]["fire_control"]["before_target_change_ceasefire_ms"].as<int>();
+        RMM_fire_control_data.aim_center_vyaw_lower_threshold =
+            (*config_file_ptr)["predictor"]["fire_control"]["aim_center_vyaw_lower_threshold"].as<float>();
+        RMM_fire_control_data.aim_center_vyaw_upper_threshold =
+            (*config_file_ptr)["predictor"]["fire_control"]["aim_center_vyaw_upper_threshold"].as<float>();
+        RMM_fire_control_data.aim_center_yaw_bias_expand =
+            (*config_file_ptr)["predictor"]["fire_control"]["aim_center_yaw_bias_expand"].as<float>();
+        RMM_fire_control_data.low_vyaw_change_target_delta_yaw_threshold =
+            M_PI / 180.0 * (*config_file_ptr)["predictor"]["fire_control"]["low_vyaw_change_target_delta_yaw_threshold_degree"].as<float>();
+        RMM_fire_control_data.low_vyaw_threshold =
+            (*config_file_ptr)["predictor"]["fire_control"]["low_vyaw_threshold"].as<float>();
 
-        pre_predict_time = (*config_file_ptr)["pre_predict_time"].as<float>();
-        pre_predict_time_not_aim = (*config_file_ptr)["pre_predict_time_not_aim"].as<float>();
+        pre_predict_time = (*config_file_ptr)["predictor"]["pre_predict_time"].as<float>();
+        pre_predict_time_not_aim = (*config_file_ptr)["predictor"]["pre_predict_time_not_aim"].as<float>();
 
-        extra_predict_time = (*config_file_ptr)["extra_predict_time"].as<float>();
-        choose_armor_yaw_bias = M_PI / 180.0 * (*config_file_ptr)["choose_armor_yaw_bias_degree"].as<float>();
-        RMM_visualize_zoom_out_factor = (*config_file_ptr)["RMM_visualize_zoom_out_factor"].as<float>();
+        extra_predict_time = (*config_file_ptr)["predictor"]["extra_predict_time"].as<float>();
+        choose_armor_yaw_bias = M_PI / 180.0 * (*config_file_ptr)["predictor"]["choose_armor_yaw_bias_degree"].as<float>();
+        RMM_visualize_zoom_out_factor = (*config_file_ptr)["predictor"]["rmm_visualize_zoom_out_factor"].as<float>();
     }
 
     PredictorResult step(std::vector<ArmorResult>& classifyResults, cv::Mat& frame, PredictorType::PredictorType control_predictor_type);

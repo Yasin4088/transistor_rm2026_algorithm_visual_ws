@@ -19,13 +19,14 @@ namespace ArmorType {
 // 带参数的构造函数
 Armor::Armor(const cv::RotatedRect& left, const cv::RotatedRect& right, std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node, int history_frame_identifier) 
     : leftLight(left), rightLight(right), confidence(0.0f), node(node) {
-    corners_expand_ratio = (*config_file_ptr)["corners_expand_ratio"].as<float>();
-    corners_narrow_ratio = (*config_file_ptr)["corners_narrow_ratio"].as<float>();
-    height_correct_ratio_small = (*config_file_ptr)["height_correct_ratio_small"].as<float>();
-    width_correct_ratio_small = (*config_file_ptr)["width_correct_ratio_small"].as<float>();
-    height_correct_ratio_large = (*config_file_ptr)["height_correct_ratio_large"].as<float>();
-    width_correct_ratio_large = (*config_file_ptr)["width_correct_ratio_large"].as<float>();
-    is_ture_yolo_armor_brightness_ratio = (*config_file_ptr)["is_ture_yolo_armor_brightness_ratio"].as<float>();
+    const YAML::Node& armor_cfg = (*config_file_ptr)["armor_detector"];
+    corners_expand_ratio = armor_cfg["corners_expand_ratio"].as<float>();
+    corners_narrow_ratio = armor_cfg["corners_narrow_ratio"].as<float>();
+    height_correct_ratio_small = armor_cfg["height_correct_ratio_small"].as<float>();
+    width_correct_ratio_small = armor_cfg["width_correct_ratio_small"].as<float>();
+    height_correct_ratio_large = armor_cfg["height_correct_ratio_large"].as<float>();
+    width_correct_ratio_large = armor_cfg["width_correct_ratio_large"].as<float>();
+    is_ture_yolo_armor_brightness_ratio = armor_cfg["is_true_yolo_armor_brightness_ratio"].as<float>();
     calculateROI();
 
     if (history_frame_identifier != -1) {

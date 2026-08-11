@@ -25,8 +25,7 @@ std::pair<string, string> convertOnnxToIR(const string& onnx_path) {
 
 RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node, string model_path, string device) 
     : config_file_ptr(config_file_ptr), node(node) {
-    fix_armor_class_ =
-        (*config_file_ptr)["FIX_ARMOR_CLASS"] ? (*config_file_ptr)["FIX_ARMOR_CLASS"].as<int>() : -1;
+    fix_armor_class_ = (*config_file_ptr)["auto_aim_macro"]["control"]["fix_armor_class"].as<int>();
 
     // -------------------- Step 1: 模型转换（ONNX -> IR） --------------------
     // 检查模型文件是否存在

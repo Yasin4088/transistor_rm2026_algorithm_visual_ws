@@ -26,8 +26,8 @@ void SharedMemoryClassifier::resetSemaphore(sem_t* sem) {
 }
 
 SharedMemoryClassifier::SharedMemoryClassifier(std::shared_ptr<YAML::Node> config_file_ptr) {
-    CLASSIFIER_SHM_KEY = (*config_file_ptr)["CLASSIFIER_SHM_KEY"].as<int>();
-    show_windows_ = (*config_file_ptr)["SHOW_WINDOWS"] ? (*config_file_ptr)["SHOW_WINDOWS"].as<bool>() : false;
+    CLASSIFIER_SHM_KEY = (*config_file_ptr)["shared_memory_classifier"]["shm_key"].as<int>();
+    show_windows_ = (*config_file_ptr)["auto_aim_macro"]["debug"]["show_windows"].as<bool>();
 
     // 1. 初始化信号量 (使用 O_EXCL 确保只有第一个进程创建并初始化值，后续进程直接打开)
     // 初始值设为 0，表示一开始没有数据

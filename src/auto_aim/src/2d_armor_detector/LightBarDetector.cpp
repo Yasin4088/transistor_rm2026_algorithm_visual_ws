@@ -262,15 +262,16 @@ void Light::correctLengthAndWidth(const cv::Mat& gray_img) {
 
 LightBarDetector::LightBarDetector(const Params& params, std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node) // 新增传入节点，用于debug打印
     : params(params), enemy_color(params.enemy_color), node(node), config_file_ptr(config_file_ptr) {
-        mean_color_diff_THRESHOLD_BLUE = (*config_file_ptr)["mean_color_diff_THRESHOLD_BLUE"].as<float>();
-        mean_color_diff_THRESHOLD_RED = (*config_file_ptr)["mean_color_diff_THRESHOLD_RED"].as<float>();
-        color_rect_expand_FACTOR = (*config_file_ptr)["color_rect_expand_FACTOR"].as<float>(); 
-        binary_img_THRESHOLD = (*config_file_ptr)["binary_img_THRESHOLD"].as<uint8_t>(); 
-        subtract_value = (*config_file_ptr)["subtract_value"].as<uint8_t>(); 
-        THRES_MAX_COLOR_RED = (*config_file_ptr)["THRES_MAX_COLOR_RED"].as<int>(); 
-        THRES_MAX_COLOR_BLUE = (*config_file_ptr)["THRES_MAX_COLOR_BLUE"].as<int>(); 
-        light_bar_max_angle = (*config_file_ptr)["light_bar_max_angle"].as<float>();
-        show_windows_ = (*config_file_ptr)["SHOW_WINDOWS"] ? (*config_file_ptr)["SHOW_WINDOWS"].as<bool>() : false;
+        const YAML::Node& light_cfg = (*config_file_ptr)["light_bar_detector"];
+        mean_color_diff_THRESHOLD_BLUE = light_cfg["mean_color_diff_threshold_blue"].as<float>();
+        mean_color_diff_THRESHOLD_RED = light_cfg["mean_color_diff_threshold_red"].as<float>();
+        color_rect_expand_FACTOR = light_cfg["color_rect_expand_factor"].as<float>();
+        binary_img_THRESHOLD = light_cfg["binary_img_threshold"].as<uint8_t>();
+        subtract_value = light_cfg["subtract_value"].as<uint8_t>();
+        THRES_MAX_COLOR_RED = light_cfg["thres_max_color_red"].as<int>();
+        THRES_MAX_COLOR_BLUE = light_cfg["thres_max_color_blue"].as<int>();
+        light_bar_max_angle = light_cfg["light_bar_max_angle"].as<float>();
+        show_windows_ = (*config_file_ptr)["auto_aim_macro"]["debug"]["show_windows"].as<bool>();
     }
 
 void LightBarDetector::setEnemyColor(int color) {

@@ -88,8 +88,10 @@ public:
             visualizer_config_.show_windows ? "enabled" : "disabled",
             visualizer_config_.publish_topics ? "enabled" : "disabled");
         // 性能监控
-        const bool performance_monitor_enabled =(*config_file_ptr)["performance_monitor_enabled"].as<bool>();
-        const size_t performance_monitor_report_interval =(*config_file_ptr)["performance_monitor_report_interval"].as<size_t>();
+        const bool performance_monitor_enabled =
+            (*config_file_ptr)["runtime"]["performance_monitor"]["enabled"].as<bool>();
+        const size_t performance_monitor_report_interval =
+            (*config_file_ptr)["runtime"]["performance_monitor"]["report_interval"].as<size_t>();
         performance_monitor_ = std::make_shared<PerformanceMonitor>(
             performance_monitor_enabled,
             performance_monitor_report_interval);
@@ -99,15 +101,15 @@ public:
             performance_monitor_report_interval);
 
         // 参数初始化
-        // 原来AutoAimMacro参数迁移，改为运行时配置
-        save_img_freq_ = (*config_file_ptr)["SAVE_IMG_FREQ"].as<int>();
-        sync_camera_fps_ = (*config_file_ptr)["SYNC_CAMERA_FPS"].as<bool>();
-        fix_enemy_color_ = (*config_file_ptr)["FIX_ENEMY_COLOR"].as<int>();
-        fix_bullet_velocity_ = (*config_file_ptr)["FIX_BULLET_VELOCITY"]
-            ? (*config_file_ptr)["FIX_BULLET_VELOCITY"].as<float>() : -1.0f;
-        use_video_ = (*config_file_ptr)["USE_VIDEO"] ? (*config_file_ptr)["USE_VIDEO"].as<bool>() : false;
-        use_images_ = (*config_file_ptr)["USE_IMAGES"] ? (*config_file_ptr)["USE_IMAGES"].as<bool>() : false;
-        debug_code_enabled_ = (*config_file_ptr)["DEBUG_CODE"] ? (*config_file_ptr)["DEBUG_CODE"].as<bool>() : false;
+        // 原来AutoAimMacro参数迁移，改为层级运行时配置
+        const YAML::Node& macro_cfg = (*config_file_ptr)["auto_aim_macro"];
+        save_img_freq_ = macro_cfg["image"]["save_img_freq"].as<int>();
+        sync_camera_fps_ = macro_cfg["image"]["sync_camera_fps"].as<bool>();
+        fix_enemy_color_ = macro_cfg["control"]["fix_enemy_color"].as<int>();
+        fix_bullet_velocity_ = macro_cfg["control"]["fix_bullet_velocity"].as<float>();
+        use_video_ = macro_cfg["input"]["use_video"].as<bool>();
+        use_images_ = macro_cfg["input"]["use_images"].as<bool>();
+        debug_code_enabled_ = macro_cfg["debug"]["debug_code"].as<bool>();
         if (use_video_ && use_images_) {
             RCLCPP_WARN(this->get_logger(), "USE_VIDEO and USE_IMAGES are both true, video input will be used.");
         }
@@ -118,47 +120,47 @@ public:
         } else if (fix_enemy_color_ == 1) {
             enemy_color_ = "BLUE";
         } else {
-            enemy_color_ = (*config_file_ptr)["init_enemy_color"].as<std::string>();
+            enemy_color_ = (*config_file_ptr)["armor_detect_node"]["init_enemy_color"].as<std::string>();
         }
 
         // 初始化子弹速度
         if (fix_bullet_velocity_ >= 0.0f) {
             bullet_velocity_ = fix_bullet_velocity_;
         } else {
-            bullet_velocity_ = (*config_file_ptr)["bullet_velocity_"].as<float>();
+            bullet_velocity_ = (*config_file_ptr)["armor_detect_node"]["ballistic"]["bullet_velocity"].as<float>();
         }
 
         // 输入源初始化（优先级：video > images > camera）
         if (use_video_) {
             video_input_ = std::make_shared<VideoInput>(
-                (ws_dir_path / (*config_file_ptr)["video_relative_path"].as<std::string>()).string());
+                (ws_dir_path / (*config_file_ptr)["armor_detect_node"]["input_paths"]["video_relative_path"].as<std::string>()).string());
         } else if (use_images_) {
             images_input_ = std::make_shared<ImagesInput>(
-                (ws_dir_path / (*config_file_ptr)["images_relative_path"].as<std::string>()).string());
+                (ws_dir_path / (*config_file_ptr)["armor_detect_node"]["input_paths"]["images_relative_path"].as<std::string>()).string());
         } else {
             camera_ = std::make_shared<Camera>(
-                (*config_file_ptr)["cam_ip"].as<std::string>(),
-                (*config_file_ptr)["pc_ip"].as<std::string>());
-            camera_->setExposureTime((*config_file_ptr)["camera_ExposureTime"].as<float>());
-            camera_->setGain((*config_file_ptr)["camera_Gain"].as<float>());
+                (*config_file_ptr)["armor_detect_node"]["camera"]["cam_ip"].as<std::string>(),
+                (*config_file_ptr)["armor_detect_node"]["camera"]["pc_ip"].as<std::string>());
+            camera_->setExposureTime((*config_file_ptr)["armor_detect_node"]["camera"]["exposure_time"].as<float>());
+            camera_->setGain((*config_file_ptr)["armor_detect_node"]["camera"]["gain"].as<float>());
             camera_->start();
         }
 
         // 自瞄参数初始化
         // 根据相机内参自动提取
-        const YAML::Node& camera_matrix_Node = (*config_file_ptr)["camera_matrix"];
+        const YAML::Node& camera_matrix_Node = (*config_file_ptr)["solver"]["camera_calibration"]["camera_matrix"];
         yaw_rad_to_x_pixel_ratio = camera_matrix_Node[0][0].as<float>();
         pitch_rad_to_y_pixel_ratio = camera_matrix_Node[1][1].as<float>();
 
-        params_.min_light_height = (*config_file_ptr)["min_light_height"].as<int>();
-        params_.light_min_area = (*config_file_ptr)["light_min_area"].as<int>();
-        params_.light_max_area = (*config_file_ptr)["light_max_area"].as<int>();
-        params_.max_light_wh_ratio = (*config_file_ptr)["max_light_wh_ratio"].as<float>();
-        params_.min_light_wh_ratio = (*config_file_ptr)["min_light_wh_ratio"].as<float>();
-        params_.light_max_tilt_angle = (*config_file_ptr)["light_max_tilt_angle"].as<float>();
+        params_.min_light_height = (*config_file_ptr)["detector_params"]["min_light_height"].as<int>();
+        params_.light_min_area = (*config_file_ptr)["detector_params"]["light_min_area"].as<int>();
+        params_.light_max_area = (*config_file_ptr)["detector_params"]["light_max_area"].as<int>();
+        params_.max_light_wh_ratio = (*config_file_ptr)["detector_params"]["max_light_wh_ratio"].as<float>();
+        params_.min_light_wh_ratio = (*config_file_ptr)["detector_params"]["min_light_wh_ratio"].as<float>();
+        params_.light_max_tilt_angle = (*config_file_ptr)["detector_params"]["light_max_tilt_angle"].as<float>();
 
-        frame_rate_ = (*config_file_ptr)["frame_rate"].as<float>();
-        serial_delay_time = (*config_file_ptr)["serial_delay_time"].as<float>();
+        frame_rate_ = (*config_file_ptr)["runtime"]["frame_rate"].as<float>();
+        serial_delay_time = (*config_file_ptr)["runtime"]["serial_delay_time"].as<float>();
 
         if (enemy_color_ == "RED") {
             params_.enemy_color = Params::RED;

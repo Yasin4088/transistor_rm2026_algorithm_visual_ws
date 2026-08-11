@@ -18,14 +18,15 @@ class ArmorDetector {
 public:
     ArmorDetector(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node)
     : node(node), config_file_ptr(config_file_ptr) {
-        max_angle_diff = (*config_file_ptr)["max_angle_diff"].as<float>();
-        max_height_diff_ratio = (*config_file_ptr)["max_height_diff_ratio"].as<float>();
-        min_light_distance = (*config_file_ptr)["min_light_distance"].as<float>();
-        max_light_distance = (*config_file_ptr)["max_light_distance"].as<float>();
-        min_armor_confidence = (*config_file_ptr)["min_armor_confidence"].as<float>();
-        max_expected_small_distance_mismatch_ratio = (*config_file_ptr)["max_expected_small_distance_mismatch_ratio"].as<float>();
-        max_expected_large_distance_mismatch_ratio = (*config_file_ptr)["max_expected_large_distance_mismatch_ratio"].as<float>();
-        max_length_direction_mismatch_ratio = (*config_file_ptr)["max_length_direction_mismatch_ratio"].as<float>();
+        const YAML::Node& armor_cfg = (*config_file_ptr)["armor_detector"];
+        max_angle_diff = armor_cfg["max_angle_diff"].as<float>();
+        max_height_diff_ratio = armor_cfg["max_height_diff_ratio"].as<float>();
+        min_light_distance = armor_cfg["min_light_distance"].as<float>();
+        max_light_distance = armor_cfg["max_light_distance"].as<float>();
+        min_armor_confidence = armor_cfg["min_armor_confidence"].as<float>();
+        max_expected_small_distance_mismatch_ratio = armor_cfg["max_expected_small_distance_mismatch_ratio"].as<float>();
+        max_expected_large_distance_mismatch_ratio = armor_cfg["max_expected_large_distance_mismatch_ratio"].as<float>();
+        max_length_direction_mismatch_ratio = armor_cfg["max_length_direction_mismatch_ratio"].as<float>();
     }
     std::vector<Armor> detectArmors(const std::vector<Light>& lights);
 private:
