@@ -102,6 +102,7 @@ public:
         // 参数初始化
         // 原来AutoAimMacro参数迁移，改为运行时配置
         save_img_freq_ = (*config_file_ptr)["SAVE_IMG_FREQ"].as<int>();
+        sync_camera_fps_ = (*config_file_ptr)["SYNC_CAMERA_FPS"].as<bool>();
 
         // 初始化敌方颜色
 #ifdef FIX_ENEMY_COLOR
@@ -240,7 +241,10 @@ private:
     // 时间与基础参数
     std::chrono::time_point<std::chrono::steady_clock> node_start_time;
     float bullet_velocity_;
+
+    // AutoAimMacro参数迁移
     int save_img_freq_ = 0;
+    bool sync_camera_fps_ = false;
 
     // MCU 姿态状态
     float last_pitch_rad_mcu_;
@@ -688,11 +692,16 @@ private:
 
         const auto performance_start_time = std::chrono::steady_clock::now();
         cv::Mat frame;
-#if defined(USE_VIDEO) || defined(USE_IMAGES) || defined(SYNC_CAMERA_FPS)
-        while (image_used && !g_bExit) {
-            usleep(1000);
-        }
+
+        bool should_sync_camera_fps = sync_camera_fps_;
+#if defined(USE_VIDEO) || defined(USE_IMAGES)
+        should_sync_camera_fps = true;
 #endif
+        if (should_sync_camera_fps) {
+            while (image_used && !g_bExit) {
+                usleep(1000);
+            }
+        }//改为用if语句判断
         pthread_mutex_lock(&g_mutex);
         if (!g_image.empty()) {
             frame = g_image.clone();
