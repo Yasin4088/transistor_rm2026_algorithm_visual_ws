@@ -185,7 +185,9 @@ private:
     std::shared_ptr<YAML::Node> config_file_ptr_;
     VisualizerConfig visualizer_config_;
     std::chrono::steady_clock::time_point node_start_time_;
-    cv::Mat latest_raw_frame_;
+    // 保存 CvImageConstPtr 而非裸 Mat：toCvShare 的 Mat 不持有消息数据所有权，
+    // 只有持有消息智能指针才能保活缓冲，否则消息释放后指针悬垂（段错误）
+    cv_bridge::CvImageConstPtr latest_raw_frame_;
 
     float last_current_yaw_ = 0.0f;
     float last_target_yaw_ = 0.0f;
@@ -230,9 +232,9 @@ private:
     void handleRawFrame(const sensor_msgs::msg::Image::ConstSharedPtr& msg)
     {
         try {
-            // toCvShare：零拷贝引用消息数据（refcount 保持消息存活），
-            // 发布端编码即 bgr8，无需转换；替代 toCvCopy 的一次全图拷贝
-            latest_raw_frame_ = cv_bridge::toCvShare(msg, "bgr8")->image;
+            // toCvShare：零拷贝引用消息数据，发布端编码即 bgr8，无需转换；
+            // 持有消息指针以保证图像缓冲不被释放（替代 toCvCopy 的一次全图拷贝）
+            latest_raw_frame_ = cv_bridge::toCvShare(msg, "bgr8");
         } catch (const cv_bridge::Exception& e) {
             RCLCPP_WARN(this->get_logger(), "Failed to convert raw frame: %s", e.what());
         }
@@ -240,15 +242,16 @@ private:
 
     void handleDebugData(const auto_aim::msg::VisualizerDebugData::ConstSharedPtr& msg)
     {
-        if (latest_raw_frame_.empty()) {
+        if (!latest_raw_frame_ || latest_raw_frame_->image.empty()) {
             return;
         }
 
         if (visualizer_config_.draw.main_result) {
-            // 直接在 latest_raw_frame_ 上画：回调串行执行、无并发读者，
-            // 省掉一次全图 clone；imshow 内部会复制到窗口缓冲
-            drawMainResult(latest_raw_frame_, *msg);
-            cv::imshow("Armor Detection", latest_raw_frame_);
+            // Mat 浅拷贝共享消息缓冲（消息被 latest_raw_frame_ 保活），零拷贝；
+            // 回调串行执行、无并发读者，画图修改缓冲安全；imshow 内部会复制到窗口缓冲
+            cv::Mat display = latest_raw_frame_->image;
+            drawMainResult(display, *msg);
+            cv::imshow("Armor Detection", display);
         }
 
         if (visualizer_config_.draw.yaw_curve) {
