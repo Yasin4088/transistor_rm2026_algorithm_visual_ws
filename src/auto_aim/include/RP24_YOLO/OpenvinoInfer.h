@@ -39,6 +39,7 @@ public:
     ov::Core core;
     ov::preprocess::PrePostProcessor *ppp;
     ov::CompiledModel compiled_model;
+    ov::InferRequest infer_request_;   // 复用推理请求，避免每帧 create（含大量分配）
     ov::Shape input_shape;
 
     OpenvinoInfer(){}

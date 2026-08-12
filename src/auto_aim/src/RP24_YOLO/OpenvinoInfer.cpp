@@ -2,6 +2,14 @@
 
 OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, string device){
     input_shape = {1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH), 3};
+    // 限制 CPU 推理并行度：默认会占满所有逻辑核（16）且 TBB arena 大量自旋空转。
+    // 单流 + 少量线程，避免 TBB 空转成为最大 CPU 热点。
+    try {
+        core.set_property("CPU", ov::inference_num_threads(4));
+        core.set_property("CPU", ov::num_streams(1));
+    } catch (const std::exception& e) {
+        std::cerr << "[OpenvinoInfer] set_property warning: " << e.what() << std::endl;
+    }
     model = core.read_model(model_path_xml, model_path_bin);
     // Step . Inizialize Preprocessing for the model
     ppp = new ov::preprocess::PrePostProcessor(model);
@@ -18,6 +26,7 @@ OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, strin
     model = ppp->build();
 
     compiled_model = core.compile_model(model, device);
+    infer_request_ = compiled_model.create_infer_request();  // 创建一次，循环复用
 }
 
 void OpenvinoInfer::infer(Mat img, int detect_color){
@@ -33,11 +42,10 @@ void OpenvinoInfer::infer(Mat img, int detect_color){
 
     uchar* input_data = (uchar *)img.data; // 创建一个新的float数组
     ov::Tensor input_tensor = ov::Tensor(compiled_model.input().get_element_type(), compiled_model.input().get_shape(), input_data);
-    // Step 6. Create an infer request for model inference
-    ov::InferRequest infer_request = compiled_model.create_infer_request();
-    infer_request.set_input_tensor(input_tensor);
+    // Step 6. 复用推理请求（infer_request_ 由构造创建，本函数串行调用，线程安全）
+    infer_request_.set_input_tensor(input_tensor);
     double ta = cv::getTickCount();
-    infer_request.infer();
+    infer_request_.infer();
     double tb = cv::getTickCount();
 //        std::cout <<"timeab: "<< (tb - ta) / cv::getTickFrequency() * 1000 << " "<<std::endl;
 
@@ -46,7 +54,7 @@ void OpenvinoInfer::infer(Mat img, int detect_color){
     // Step 8. get result
     // -------- Step 8. Post-process the inference result -----------
 
-    auto output = infer_request.get_output_tensor(0);
+    auto output = infer_request_.get_output_tensor(0);
     ov::Shape output_shape = output.get_shape();
 //        std::cout << "The shape of output tensor:"<<output_shape << std::endl;
     // 25200 x 85 Matrix

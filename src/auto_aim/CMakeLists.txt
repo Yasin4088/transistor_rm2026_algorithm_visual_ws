@@ -4,7 +4,11 @@ project(auto_aim)
 # 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
-set(CMAKE_BUILD_TYPE Release)
+# 默认 RelWithDebInfo（带调试符号 + 优化，便于 uProf/性能分析定位函数）；
+# 可通过命令行 -DCMAKE_BUILD_TYPE=xxx 覆盖
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
 
 # 查找依赖包
 find_package(ament_cmake REQUIRED)
