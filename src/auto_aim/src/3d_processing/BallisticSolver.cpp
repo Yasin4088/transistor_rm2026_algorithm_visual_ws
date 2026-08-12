@@ -249,7 +249,7 @@ BallisticSolver::CalcPitchInfo BallisticSolver::calcTargetPitchWithAirResistance
     }
     
     // 并行粗搜索：交给线程池，替代 std::execution::par（隐式线程池、线程数不可控）
-    utils::threadPool().parallel_for_each(start_check_thread_infos.begin(), start_check_thread_infos.end(),
+    ::utils::threadPool().parallel_for_each(start_check_thread_infos.begin(), start_check_thread_infos.end(),
         [&](StartCheckThreadInfo& start_check_thread_info) {
             float pitch_rad = start_check_thread_info.pitch;
             int start_check_index = start_check_thread_info.thread_index;
@@ -307,7 +307,7 @@ BallisticSolver::CalcPitchInfo BallisticSolver::calcTargetPitchWithAirResistance
     }
     
     // 并行细化：同上
-    utils::threadPool().parallel_for_each(refine_thread_infos.begin(), refine_thread_infos.end(),
+    ::utils::threadPool().parallel_for_each(refine_thread_infos.begin(), refine_thread_infos.end(),
         [&](RefineThreadInfo& refine_thread_info) {
             RefineInfo refine_info = refine_thread_info.refine_info;
             int refine_step = 0;

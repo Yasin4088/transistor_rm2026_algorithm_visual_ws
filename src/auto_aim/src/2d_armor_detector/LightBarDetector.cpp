@@ -401,7 +401,7 @@ void LightBarDetector::detectLights(cv::Mat& img) {
 
 
     // 并行灯条处理：线程池替代 std::execution::par
-    utils::threadPool().parallel_for_each(lightDetectThreadInfos.begin(), lightDetectThreadInfos.end(),
+    ::utils::threadPool().parallel_for_each(lightDetectThreadInfos.begin(), lightDetectThreadInfos.end(),
     [&](LightDetectThreadInfo& lightDetectThreadInfo) {
 
         cv::RotatedRect& rect = *lightDetectThreadInfo.lightRect;

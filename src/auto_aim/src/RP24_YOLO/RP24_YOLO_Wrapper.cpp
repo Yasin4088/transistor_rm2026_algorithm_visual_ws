@@ -111,7 +111,7 @@ uint64_t RP24YOLOWrapper::submitFrame(cv::Mat frame, int detect_color, void* use
 
     pending_tasks_.fetch_add(1);
     try {
-        utils::threadPool().submit([this, work]() { processOneFrame(work); });
+        ::utils::threadPool().submit([this, work]() { processOneFrame(work); });
     } catch (const std::exception&) {
         // 池已停止等极端情况：不处理该帧
         pending_tasks_.fetch_sub(1);

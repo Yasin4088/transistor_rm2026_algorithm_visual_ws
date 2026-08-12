@@ -94,7 +94,7 @@ std::vector<ArmorResult> ArmorClassifier::classify(
         roiImageThreadInfos[i].armor_index = i;
     }
     // 并行 ROI 预处理：线程池替代 std::execution::par
-    utils::threadPool().parallel_for_each(roiImageThreadInfos.begin(), roiImageThreadInfos.end(),
+    ::utils::threadPool().parallel_for_each(roiImageThreadInfos.begin(), roiImageThreadInfos.end(),
     [&](RoiImageThreadInfo& roiImageThreadInfo) {
         roi_images[roiImageThreadInfo.armor_index] = preprocessROI(img, *roiImageThreadInfo.armor);
     });

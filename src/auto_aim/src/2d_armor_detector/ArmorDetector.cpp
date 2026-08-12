@@ -29,7 +29,7 @@ std::vector<Armor> ArmorDetector::detectArmors(const std::vector<Light>& lights)
     }
     
     // 并行配对检测：线程池替代 std::execution::par
-    utils::threadPool().parallel_for_each(armorDetectThreadInfos.begin(), armorDetectThreadInfos.end(),
+    ::utils::threadPool().parallel_for_each(armorDetectThreadInfos.begin(), armorDetectThreadInfos.end(),
     [&](ArmorDetectThreadInfo& armorDetectThreadInfo) {
         const Light& leftLight = *armorDetectThreadInfo.leftLight;
         const Light& rightLight = *armorDetectThreadInfo.rightLight;
