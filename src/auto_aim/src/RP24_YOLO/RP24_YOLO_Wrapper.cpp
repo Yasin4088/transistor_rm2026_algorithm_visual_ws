@@ -1,5 +1,6 @@
 #include "RP24_YOLO/RP24_YOLO_Wrapper.h"
 #include "pipeline/AutoAimPipeline.h"
+#include "utils/ThreadPool.h"
 
 std::pair<string, string> convertOnnxToIR(const string& onnx_path) {
     ov::Core core;
@@ -70,11 +71,9 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
 
     armor_tracker = std::make_shared<ArmorTracker>(config_file_ptr, node);
 
-    // 启动三阶段流水线线程：preprocess -> infer -> postprocess
-    preprocess_thread_ = std::thread(&RP24YOLOWrapper::preprocessLoop, this);
-    infer_thread_ = std::thread(&RP24YOLOWrapper::inferLoop, this);
-    postprocess_thread_ = std::thread(&RP24YOLOWrapper::postprocessLoop, this);
-    cout << "[INFO] YOLO 3-stage async pipeline started" << endl;
+    // 检测流水线由线程池驱动：每帧一个任务，池内多帧并行；
+    // 推理段（OpenvinoInfer 非线程安全）由 infer_mutex_ 串行保护
+    cout << "[INFO] YOLO async pipeline started (thread pool)" << endl;
 }
 
 RP24YOLOWrapper::~RP24YOLOWrapper()
@@ -84,128 +83,138 @@ RP24YOLOWrapper::~RP24YOLOWrapper()
 
 void RP24YOLOWrapper::stop()
 {
-    // 依次关闭入口队列与各寄存器，唤醒所有阻塞的流水线线程
-    input_queue_.close();
-    pre_register_.close();
-    infer_register_.close();
-    result_register_.close();
-
-    if (preprocess_thread_.joinable()) preprocess_thread_.join();
-    if (infer_thread_.joinable()) infer_thread_.join();
-    if (postprocess_thread_.joinable()) postprocess_thread_.join();
+    {
+        std::lock_guard<std::mutex> lock(results_mtx_);
+        if (stopping_.exchange(true)) {
+            return;  // 幂等
+        }
+    }
+    // 等待已在飞的任务完成（preprocess/infer/postprocess 结束后 pending 归零）
+    std::unique_lock<std::mutex> lock(results_mtx_);
+    results_cv_.wait(lock, [this]() { return pending_tasks_.load() == 0; });
+    results_.clear();
+    results_cv_.notify_all();
 }
 
 uint64_t RP24YOLOWrapper::submitFrame(cv::Mat frame, int detect_color, void* user_data)
 {
     uint64_t frame_id = next_frame_id_.fetch_add(1);
+    if (stopping_.load()) {
+        return frame_id;  // 停止中，丢弃新帧
+    }
 
-    YoloTask task;
-    task.frame_id = frame_id;
-    task.user_data = user_data;
-    task.frame = std::move(frame);  // cv::Mat 移动：只搬引用计数头，代价极小
-    task.detect_color = detect_color;
-    input_queue_.push(std::move(task));
+    auto work = std::make_shared<YoloWork>();
+    work->frame_id = frame_id;
+    work->user_data = user_data;
+    work->frame = std::move(frame);  // cv::Mat 移动：只搬引用计数头，代价极小
+    work->detect_color = detect_color;
+
+    pending_tasks_.fetch_add(1);
+    try {
+        utils::threadPool().submit([this, work]() { processOneFrame(work); });
+    } catch (const std::exception&) {
+        // 池已停止等极端情况：不处理该帧
+        pending_tasks_.fetch_sub(1);
+    }
     return frame_id;
 }
 
 bool RP24YOLOWrapper::tryTakeResult(YoloResult* out)
 {
-    YoloWork work;
-    if (!result_register_.tryTake(&work)) return false;
-    out->frame_id = work.frame_id;
-    out->user_data = work.user_data;
-    out->armors = std::move(work.armors);
-    out->rp24_classes = std::move(work.rp24_classes);
+    std::lock_guard<std::mutex> lock(results_mtx_);
+    if (results_.empty()) {
+        return false;
+    }
+    *out = std::move(results_.front());
+    results_.pop_front();
     return true;
 }
 
 RP24YOLOWrapper::YoloResult RP24YOLOWrapper::takeResult(uint64_t frame_id)
 {
     YoloResult result;
-    YoloWork work;
-    if (result_register_.take(&work)) {
-        if (work.frame_id != frame_id) {
-            // 最新数据优先语义下，请求的帧可能已被更新的帧覆盖，属正常情况
-            RCLCPP_DEBUG(node->get_logger(),
-                "YOLO result superseded: expect %llu, got %llu",
-                (unsigned long long)frame_id, (unsigned long long)work.frame_id);
-        }
-        result.frame_id = work.frame_id;
-        result.user_data = work.user_data;
-        result.armors = std::move(work.armors);
-        result.rp24_classes = std::move(work.rp24_classes);
+    std::unique_lock<std::mutex> lock(results_mtx_);
+    results_cv_.wait(lock, [this]() { return stopping_.load() || !results_.empty(); });
+    if (results_.empty()) {
+        return result;
+    }
+    result = std::move(results_.front());
+    results_.pop_front();
+    if (result.frame_id != frame_id) {
+        // 最新数据优先语义下，请求的帧可能已被更新的帧覆盖，属正常情况
+        RCLCPP_DEBUG(node->get_logger(),
+            "YOLO result superseded: expect %llu, got %llu",
+            (unsigned long long)frame_id, (unsigned long long)result.frame_id);
     }
     return result;
 }
 
-void RP24YOLOWrapper::preprocessLoop()
+void RP24YOLOWrapper::processOneFrame(std::shared_ptr<YoloWork> work)
 {
-    std::cerr << "[diag] preprocess thread entered" << std::endl;
-    YoloTask task;
-    while (input_queue_.pop(&task)) {
-        YoloWork work;
-        work.frame_id = task.frame_id;
-        work.user_data = task.user_data;
-        work.frame = std::move(task.frame);
-        work.detect_color = task.detect_color;
-
+    try {
+        // 1. preprocess（池内多帧可并行）
         auto stage_start = std::chrono::steady_clock::now();
-        work.infer_input = preprocess(work.frame);
+        work->infer_input = preprocess(work->frame);
         double stage_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - stage_start).count();
-        // 写入帧的 performance_profile（同学的监控机制），保留 YOLO 分阶段计时
-        if (work.user_data != nullptr) {
-            auto* pd = static_cast<AutoAimPipelineData*>(work.user_data);
+        if (work->user_data != nullptr) {
+            auto* pd = static_cast<AutoAimPipelineData*>(work->user_data);
             if (pd->initial.performance_profile) {
                 pd->initial.performance_profile->stages["yolo_preprocess"] += stage_ms;
             }
         }
 
-        if (!pre_register_.put(std::move(work))) break;
-    }
-    std::cerr << "[diag] preprocess thread exited" << std::endl;
-}
-
-void RP24YOLOWrapper::inferLoop()
-{
-    std::cerr << "[diag] infer thread entered" << std::endl;
-    YoloWork work;
-    while (pre_register_.take(&work)) {
-        auto stage_start = std::chrono::steady_clock::now();
-        work.objects = infer(work.infer_input, work.detect_color);
-        double stage_ms = std::chrono::duration<double, std::milli>(
+        // 2. infer（OpenvinoInfer 非线程安全，串行保护）
+        stage_start = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> lock(infer_mutex_);
+            work->objects = infer(work->infer_input, work->detect_color);
+        }
+        stage_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - stage_start).count();
-        if (work.user_data != nullptr) {
-            auto* pd = static_cast<AutoAimPipelineData*>(work.user_data);
+        if (work->user_data != nullptr) {
+            auto* pd = static_cast<AutoAimPipelineData*>(work->user_data);
             if (pd->initial.performance_profile) {
                 pd->initial.performance_profile->stages["yolo_infer"] += stage_ms;
             }
         }
 
-        if (!infer_register_.put(std::move(work))) break;
-    }
-    std::cerr << "[diag] infer thread exited" << std::endl;
-}
-
-void RP24YOLOWrapper::postprocessLoop()
-{
-    std::cerr << "[diag] postprocess thread entered" << std::endl;
-    YoloWork work;
-    while (infer_register_.take(&work)) {
-        auto stage_start = std::chrono::steady_clock::now();
-        work.armors = postprocess(work.frame, work.objects, &work.rp24_classes);
-        double stage_ms = std::chrono::duration<double, std::milli>(
+        // 3. postprocess（池内多帧可并行）
+        stage_start = std::chrono::steady_clock::now();
+        work->armors = postprocess(work->frame, work->objects, &work->rp24_classes);
+        stage_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - stage_start).count();
-        if (work.user_data != nullptr) {
-            auto* pd = static_cast<AutoAimPipelineData*>(work.user_data);
+        if (work->user_data != nullptr) {
+            auto* pd = static_cast<AutoAimPipelineData*>(work->user_data);
             if (pd->initial.performance_profile) {
                 pd->initial.performance_profile->stages["yolo_postprocess"] += stage_ms;
             }
         }
 
-        if (!result_register_.put(std::move(work))) break;
+        // 4. 结果入队（最新优先，有界，满则丢最旧）
+        YoloResult result;
+        result.frame_id = work->frame_id;
+        result.user_data = work->user_data;
+        result.armors = std::move(work->armors);
+        result.rp24_classes = std::move(work->rp24_classes);
+        {
+            std::lock_guard<std::mutex> lock(results_mtx_);
+            if (!stopping_.load()) {
+                if (results_.size() >= kMaxResults) {
+                    results_.pop_front();
+                }
+                results_.push_back(std::move(result));
+            }
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node->get_logger(), "YOLO processOneFrame exception: %s", e.what());
     }
-    std::cerr << "[diag] postprocess thread exited" << std::endl;
+    // 无论成功/异常都要归还任务计数并通知（stop 依赖 pending 归零）
+    {
+        std::lock_guard<std::mutex> lock(results_mtx_);
+        pending_tasks_.fetch_sub(1);
+    }
+    results_cv_.notify_all();
 }
 
 cv::Mat RP24YOLOWrapper::preprocess(const cv::Mat& frame) {

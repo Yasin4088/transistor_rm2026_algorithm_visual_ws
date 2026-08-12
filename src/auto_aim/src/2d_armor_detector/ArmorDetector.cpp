@@ -1,5 +1,6 @@
 // ArmorDetector.cpp
 #include "2d_armor_detector/ArmorDetector.h"
+#include "utils/ThreadPool.h"
 
 struct alignas(64) ArmorDetectThreadInfo { // 64字节对齐
     const Light* leftLight;
@@ -27,7 +28,8 @@ std::vector<Armor> ArmorDetector::detectArmors(const std::vector<Light>& lights)
         }
     }
     
-    std::for_each(std::execution::par, armorDetectThreadInfos.begin(), armorDetectThreadInfos.end(), 
+    // 并行配对检测：线程池替代 std::execution::par
+    utils::threadPool().parallel_for_each(armorDetectThreadInfos.begin(), armorDetectThreadInfos.end(),
     [&](ArmorDetectThreadInfo& armorDetectThreadInfo) {
         const Light& leftLight = *armorDetectThreadInfo.leftLight;
         const Light& rightLight = *armorDetectThreadInfo.rightLight;

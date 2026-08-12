@@ -18,7 +18,6 @@
 #include <string>
 #include "communication/SharedMemoryClassifier.h"
 #include <algorithm>
-#include <execution>
 #include <thread>
 #include <atomic>
 #include "2d_armor_detector/ArmorTracker.h"

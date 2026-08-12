@@ -2,15 +2,14 @@
 #define RP24_YOLO_WRAPPER_H
 
 #include "RP24_YOLO/OpenvinoInfer.h"
-#include "memory"
 #include "2d_armor_detector/Armor.h"
 #include "2d_armor_detector/ArmorTracker.h"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <opencv2/opencv.hpp>
-#include <thread>
 #include <utility>
 
 class RP24YOLOWrapper {
@@ -40,16 +39,7 @@ public:
                                          const cv::Point2f& ground_stable_point);
 
 private:
-    // ---------- 三阶段流水线数据结构 ----------
-    // 主队列中的任务
-    struct YoloTask {
-        uint64_t frame_id = 0;
-        void* user_data = nullptr;
-        cv::Mat frame;
-        int detect_color = -1;
-    };
-
-    // 寄存器中流动的中间/最终数据
+    // 一帧在流水线中流动的数据
     struct YoloWork {
         uint64_t frame_id = 0;
         void* user_data = nullptr;
@@ -61,111 +51,22 @@ private:
         vector<Armor> armors;       // postprocess 输出
     };
 
-    // 单槽寄存器（最新数据优先）：一个生产者与一个消费者之间的握手槽。
-    // 槽满时 put 不阻塞，直接覆盖旧数据——流水线永远处理最新帧；
-    // take 在槽空时阻塞等待。
-    template <typename T>
-    class Register {
-    public:
-        bool put(T item) {
-            std::lock_guard<std::mutex> lock(mtx_);
-            if (closed_) return false;
-            item_ = std::move(item);
-            has_ = true;
-            cv_.notify_one();
-            return true;
-        }
-        bool tryTake(T* out) {
-            std::lock_guard<std::mutex> lock(mtx_);
-            if (!has_) return false;
-            *out = std::move(item_);
-            has_ = false;
-            cv_.notify_one();
-            return true;
-        }
-        bool take(T* out) {
-            std::unique_lock<std::mutex> lock(mtx_);
-            cv_.wait(lock, [this]() { return closed_ || has_; });
-            if (!has_) return false;
-            *out = std::move(item_);
-            has_ = false;
-            lock.unlock();
-            cv_.notify_one();
-            return true;
-        }
-        void close() {
-            {
-                std::lock_guard<std::mutex> lock(mtx_);
-                closed_ = true;
-            }
-            cv_.notify_all();
-        }
-    private:
-        std::mutex mtx_;
-        std::condition_variable cv_;
-        bool closed_ = false;
-        bool has_ = false;
-        T item_;
-    };
-
-    // 主队列（有界多槽，最新数据优先）：帧从这里进入流水线。
-    // 满时 push 不阻塞，丢弃最旧帧，保持最新的 max_size_ 帧。
-    class InputQueue {
-    public:
-        explicit InputQueue(size_t max_size) : max_size_(max_size) {}
-        bool push(YoloTask task) {
-            std::lock_guard<std::mutex> lock(mtx_);
-            if (closed_) return false;
-            if (queue_.size() >= max_size_) {
-                queue_.pop_front();  // 丢弃最旧的一帧
-            }
-            queue_.push_back(std::move(task));
-            cv_.notify_one();
-            return true;
-        }
-        bool pop(YoloTask* out) {
-            std::unique_lock<std::mutex> lock(mtx_);
-            cv_.wait(lock, [this]() { return closed_ || !queue_.empty(); });
-            if (queue_.empty()) return false;
-            *out = std::move(queue_.front());
-            queue_.pop_front();
-            lock.unlock();
-            cv_.notify_one();
-            return true;
-        }
-        void close() {
-            {
-                std::lock_guard<std::mutex> lock(mtx_);
-                closed_ = true;
-            }
-            cv_.notify_all();
-        }
-    private:
-        std::mutex mtx_;
-        std::condition_variable cv_;
-        std::deque<YoloTask> queue_;
-        size_t max_size_ = 4;
-        bool closed_ = false;
-    };
-
-    // ---------- 三阶段线程 ----------
-    void preprocessLoop();
-    void inferLoop();
-    void postprocessLoop();
-
     // ---------- 阶段函数（原有逻辑，保持不变） ----------
     cv::Mat preprocess(const cv::Mat& frame);
     vector<Object> infer(const cv::Mat& input, int detect_color);
     vector<Armor> postprocess(const cv::Mat& frame, const vector<Object>& objects, vector<int>* rp24_classes);
 
-    // ---------- 流水线与线程成员 ----------
-    InputQueue input_queue_{4};             // 主队列：帧入口
-    Register<YoloWork> pre_register_;       // preprocess -> infer 的寄存器
-    Register<YoloWork> infer_register_;     // infer -> postprocess 的寄存器
-    Register<YoloWork> result_register_;    // postprocess -> 调用方 的结果寄存器
-    std::thread preprocess_thread_;
-    std::thread infer_thread_;
-    std::thread postprocess_thread_;
+    // 线程池任务：一帧完整处理（preprocess -> infer -> postprocess -> 结果入队）
+    void processOneFrame(std::shared_ptr<YoloWork> work);
+
+    // ---------- 线程池流水线成员 ----------
+    static constexpr size_t kMaxResults = 8;   // 结果队列上限（最新优先，满则丢最旧）
+    std::deque<YoloResult> results_;           // 已完成的帧结果
+    std::mutex results_mtx_;
+    std::condition_variable results_cv_;
+    std::mutex infer_mutex_;                   // OpenvinoInfer 非线程安全，推理串行
+    std::atomic<size_t> pending_tasks_{0};     // 在飞任务数（stop 时等待归零）
+    std::atomic<bool> stopping_{false};
     std::atomic<uint64_t> next_frame_id_{0};
 
     std::shared_ptr<OpenvinoInfer> openvino_infer;

@@ -1,5 +1,6 @@
 // ArmorCLassifier.cpp
 #include "2d_armor_detector/ArmorClassifier.h"
+#include "utils/ThreadPool.h"
 
 /* #include <iostream>
 #include <sstream>
@@ -92,8 +93,8 @@ std::vector<ArmorResult> ArmorClassifier::classify(
         roiImageThreadInfos[i].armor = &armors[i];
         roiImageThreadInfos[i].armor_index = i;
     }
-    // 进行多线程优化
-    std::for_each(std::execution::par, roiImageThreadInfos.begin(), roiImageThreadInfos.end(), 
+    // 并行 ROI 预处理：线程池替代 std::execution::par
+    utils::threadPool().parallel_for_each(roiImageThreadInfos.begin(), roiImageThreadInfos.end(),
     [&](RoiImageThreadInfo& roiImageThreadInfo) {
         roi_images[roiImageThreadInfo.armor_index] = preprocessROI(img, *roiImageThreadInfo.armor);
     });

@@ -1,6 +1,7 @@
 // LightBarDetector.cpp
 
 #include "2d_armor_detector/LightBarDetector.h"
+#include "utils/ThreadPool.h"
 
 /************************* Light类实现 *************************/
 
@@ -399,7 +400,8 @@ void LightBarDetector::detectLights(cv::Mat& img) {
     }
 
 
-    std::for_each(std::execution::par, lightDetectThreadInfos.begin(), lightDetectThreadInfos.end(), 
+    // 并行灯条处理：线程池替代 std::execution::par
+    utils::threadPool().parallel_for_each(lightDetectThreadInfos.begin(), lightDetectThreadInfos.end(),
     [&](LightDetectThreadInfo& lightDetectThreadInfo) {
 
         cv::RotatedRect& rect = *lightDetectThreadInfo.lightRect;

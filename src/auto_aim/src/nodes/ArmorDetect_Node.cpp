@@ -38,6 +38,7 @@
 #include "other_input/VideoInput.h"
 #include "pipeline/AutoAimPipeline.h"
 #include "utils/PerformanceMonitor.h"
+#include "utils/ThreadPool.h"
 #include "utils/VisualizerConfig.h"
 
 namespace fs = std::filesystem;
@@ -176,6 +177,11 @@ public:
 
         com_data_visualize_frame = cv::Mat::zeros(480, 640, CV_8UC3);
         initVisualizerPublishers();
+
+        // 全局线程池初始化（必须在流水线创建前，池是进程级单例）
+        const int thread_pool_size =
+            (*config_file_ptr)["thread_pool_size"] ? (*config_file_ptr)["thread_pool_size"].as<int>() : 0;
+        utils::threadPool(thread_pool_size);
 
         // 算法流水线初始化
         auto_aim_pipeline_ = std::make_shared<AutoAimPipeline>(

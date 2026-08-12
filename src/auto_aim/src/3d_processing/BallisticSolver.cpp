@@ -1,5 +1,6 @@
 // BallisticSolver.cpp
 #include "3d_processing/BallisticSolver.h"
+#include "utils/ThreadPool.h"
 
 // 辅助函数：将角度限制在[-180, 180]范围内
 float BallisticSolver::normalizeRad(float rad) {
@@ -247,7 +248,8 @@ BallisticSolver::CalcPitchInfo BallisticSolver::calcTargetPitchWithAirResistance
         start_check_thread_infos[start_check_index].pitch = pitch_rad;
     }
     
-    std::for_each(std::execution::par, start_check_thread_infos.begin(), start_check_thread_infos.end(), 
+    // 并行粗搜索：交给线程池，替代 std::execution::par（隐式线程池、线程数不可控）
+    utils::threadPool().parallel_for_each(start_check_thread_infos.begin(), start_check_thread_infos.end(),
         [&](StartCheckThreadInfo& start_check_thread_info) {
             float pitch_rad = start_check_thread_info.pitch;
             int start_check_index = start_check_thread_info.thread_index;
@@ -304,7 +306,8 @@ BallisticSolver::CalcPitchInfo BallisticSolver::calcTargetPitchWithAirResistance
         refine_thread_infos[optional_pitch_index].refine_info = refine_infos[optional_pitch_index];
     }
     
-    std::for_each(std::execution::par, refine_thread_infos.begin(), refine_thread_infos.end(), 
+    // 并行细化：同上
+    utils::threadPool().parallel_for_each(refine_thread_infos.begin(), refine_thread_infos.end(),
         [&](RefineThreadInfo& refine_thread_info) {
             RefineInfo refine_info = refine_thread_info.refine_info;
             int refine_step = 0;

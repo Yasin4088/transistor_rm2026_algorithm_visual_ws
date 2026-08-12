@@ -56,6 +56,8 @@ extra_predict_time : 0.170 # s          除了弹丸飞行时间以外的需要�
 performance_monitor_enabled : false
 performance_monitor_report_interval : 90 # 累计多少帧输出一次平均耗时
 
+# 线程池参数
+thread_pool_size : 0 # 全局线程池线程数，0=自动（逻辑核数）
 
 pre_predict_time_not_aim : 500.0 # ms 在看到目标的这段时间内不启动自瞄，防止因电控云台角度信息延迟而震荡
 pre_predict_time : 2000.0 # ms 在看到目标的这段时间内自瞄直接瞄准当前装甲板位置，不使用预测器预测的位置，待有足够观测值后再使用预测值

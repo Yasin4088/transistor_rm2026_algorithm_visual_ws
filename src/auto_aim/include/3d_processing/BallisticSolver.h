@@ -10,7 +10,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <opencv2/opencv.hpp>
 #include <thread>
-#include <execution>
 
 // 结构体声明
 struct BallisticInfo {
