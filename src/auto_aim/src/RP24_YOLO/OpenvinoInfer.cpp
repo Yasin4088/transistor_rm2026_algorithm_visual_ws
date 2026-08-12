@@ -1,5 +1,8 @@
 #include "RP24_YOLO/OpenvinoInfer.h"
 
+#include <algorithm>
+#include <chrono>
+
 OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, string device,
                              int infer_threads, int num_streams){
     input_shape = {1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH), 3};
@@ -7,11 +10,12 @@ OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, strin
     // 单流 + 少量线程，避免 TBB 空转成为最大 CPU 热点。
     // [实验结论] 8 线程单流实测反而更慢（~17ms vs 4 线程 ~10ms），
     // 小模型同步开销主导，单流加线程是死路。
-    // 线程/流数改为配置项 RP24_YOLO_infer_threads / RP24_YOLO_infer_streams，
-    // 后续提速方向：多流(num_streams>1) + 多 InferRequest 并发推理，而不是加单流线程。
+    // 提速方向：多流(num_streams>1) + 多 InferRequest 并发推理（请求池）。
+    // infer_threads 为总线程数 = 流数 × 每流线程数（如 8 = 2流 × 4线程）。
+    const int n_requests = std::max(1, num_streams);
     try {
         core.set_property("CPU", ov::inference_num_threads(infer_threads));
-        core.set_property("CPU", ov::num_streams(num_streams));
+        core.set_property("CPU", ov::num_streams(n_requests));
     } catch (const std::exception& e) {
         std::cerr << "[OpenvinoInfer] set_property warning: " << e.what() << std::endl;
     }
@@ -31,37 +35,65 @@ OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, strin
     model = ppp->build();
 
     compiled_model = core.compile_model(model, device);
-    infer_request_ = compiled_model.create_infer_request();  // 创建一次，循环复用
+
+    // 请求池：每请求独立输出缓冲，可并发推理（多帧并行）。流数<=1 时退化为单请求串行。
+    num_requests_ = n_requests;
+    infer_requests_.reserve(num_requests_);
+    for (int i = 0; i < num_requests_; ++i) {
+        infer_requests_.push_back(compiled_model.create_infer_request());
+    }
+    request_busy_.assign(num_requests_, 0);
 }
 
-void OpenvinoInfer::infer(Mat img, int detect_color){
-    objects.clear();
-    tmp_objects.clear();
-    ious.clear();
-    // Step 3. Read input image
-    // resize image
+std::vector<Object> OpenvinoInfer::infer(const cv::Mat& img, int detect_color,
+                                         double* wait_ms, double* infer_ms)
+{
+    // 防御：经 header 内联构造函数创建的对象也要保证有请求可用
+    if (infer_requests_.empty()) {
+        std::lock_guard<std::mutex> lk(request_mtx_);
+        if (infer_requests_.empty()) {
+            num_requests_ = 1;
+            infer_requests_.push_back(compiled_model.create_infer_request());
+            request_busy_.assign(1, 0);
+        }
+    }
 
-    // Step 5. Create tensor from image
-    int rows = img.rows;
-    int cols = img.cols;
+    // 1. 领一个空闲 InferRequest（都忙则等待；多请求 = 多帧并行推理）
+    const auto wait_t0 = std::chrono::steady_clock::now();
+    ov::InferRequest req;
+    int slot = -1;
+    {
+        std::unique_lock<std::mutex> lk(request_mtx_);
+        request_cv_.wait(lk, [this, &slot]() {
+            for (int i = 0; i < num_requests_; ++i) {
+                if (!request_busy_[i]) {
+                    slot = i;
+                    request_busy_[i] = 1;
+                    return true;
+                }
+            }
+            return false;
+        });
+        req = infer_requests_[slot];
+    }
+    if (wait_ms) {
+        *wait_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - wait_t0).count();
+    }
 
-    uchar* input_data = (uchar *)img.data; // 创建一个新的float数组
+    const auto infer_t0 = std::chrono::steady_clock::now();
+
+    // 2. 推理 + 解码（全部局部变量，不写共享成员；输出缓冲属于 req，互不干扰）
+    std::vector<Object> objects;
+    std::vector<Object> tmp_objects;
+
+    uchar* input_data = (uchar*)img.data;
     ov::Tensor input_tensor = ov::Tensor(compiled_model.input().get_element_type(), compiled_model.input().get_shape(), input_data);
-    // Step 6. 复用推理请求（infer_request_ 由构造创建，本函数串行调用，线程安全）
-    infer_request_.set_input_tensor(input_tensor);
-    double ta = cv::getTickCount();
-    infer_request_.infer();
-    double tb = cv::getTickCount();
-//        std::cout <<"timeab: "<< (tb - ta) / cv::getTickFrequency() * 1000 << " "<<std::endl;
+    req.set_input_tensor(input_tensor);
+    req.infer();
 
-    //Step 7. Retrieve inference results
-
-    // Step 8. get result
-    // -------- Step 8. Post-process the inference result -----------
-
-    auto output = infer_request_.get_output_tensor(0);
+    auto output = req.get_output_tensor(0);
     ov::Shape output_shape = output.get_shape();
-//        std::cout << "The shape of output tensor:"<<output_shape << std::endl;
     // 25200 x 85 Matrix
     cv::Mat output_buffer(output_shape[1], output_shape[2], CV_32F, output.data());
     float conf_threshold = 0.65 ;
@@ -165,5 +197,18 @@ void OpenvinoInfer::infer(Mat img, int detect_color){
             tmp_objects.push_back(objects[valid_index]);
         }
     }
-    return;
+
+    // 3. 归还请求
+    {
+        std::lock_guard<std::mutex> lk(request_mtx_);
+        request_busy_[slot] = 0;
+    }
+    request_cv_.notify_one();
+
+    if (infer_ms) {
+        *infer_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - infer_t0).count();
+    }
+
+    return tmp_objects;
 }

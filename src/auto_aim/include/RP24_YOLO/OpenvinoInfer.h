@@ -5,6 +5,8 @@
 #ifndef OPENVINO_TEST_OPENVINOINFER_H
 #define OPENVINO_TEST_OPENVINOINFER_H
 
+#include <condition_variable>
+#include <mutex>
 #include <opencv2/opencv.hpp>
 #include <openvino/openvino.hpp>
 #include <vector>
@@ -29,24 +31,32 @@ struct Object
 
 class OpenvinoInfer {
 public:
-    vector<Object> objects;
     const int IMAGE_HEIGHT = 640;
     const int IMAGE_WIDTH = 640;
     double ans;
-    vector<double> ious;
-    vector<Object> tmp_objects;
     std::shared_ptr<ov::Model> model;
     ov::Core core;
     ov::preprocess::PrePostProcessor *ppp;
     ov::CompiledModel compiled_model;
-    ov::InferRequest infer_request_;   // 复用推理请求，避免每帧 create（含大量分配）
     ov::Shape input_shape;
 
     OpenvinoInfer(){}
-    // infer_threads: CPU 推理线程数；num_streams: CPU 执行流数（>1 需配合多 InferRequest 并发）
+    // infer_threads: CPU 推理总线程数（= 流数 × 每流线程数，如 8 = 2流 × 4线程）；
+    // num_streams: 执行流数 = 并发推理请求数（1 = 单请求串行）
     OpenvinoInfer(string model_path_xml, string model_path_bin, string device,
                   int infer_threads = 4, int num_streams = 1);
-    void infer(Mat img,int detect_color);
+    // 线程安全：从请求池领一个空闲 InferRequest，推理+解码后返回结果，支持多帧并行。
+    // wait_ms / infer_ms（可选输出）：等待空闲请求耗时 / 纯推理+解码耗时。
+    std::vector<Object> infer(const cv::Mat& img, int detect_color,
+                              double* wait_ms = nullptr, double* infer_ms = nullptr);
+
+    // ---- 多帧并行推理请求池（每请求独立输出缓冲，可并发） ----
+    std::vector<ov::InferRequest> infer_requests_;
+    std::vector<char> request_busy_;      // 1 = 占用中，受 request_mtx_ 保护
+    std::mutex request_mtx_;
+    std::condition_variable request_cv_;
+    int num_requests_ = 1;
+
     OpenvinoInfer(string model_path, string device){
         input_shape = {1, 1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH)};
         // input_shape = { 1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH),1};

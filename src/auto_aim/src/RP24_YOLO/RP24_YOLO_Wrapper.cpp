@@ -80,8 +80,8 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     armor_tracker = std::make_shared<ArmorTracker>(config_file_ptr, node);
 
     // 检测流水线由线程池驱动：每帧一个任务，池内多帧并行；
-    // 推理段（OpenvinoInfer 非线程安全）由 infer_mutex_ 串行保护
-    cout << "[INFO] YOLO async pipeline started (thread pool)" << endl;
+    // 推理段由 OpenvinoInfer 内部请求池并发（多 InferRequest 并行推理，无全局锁）
+    cout << "[INFO] YOLO async pipeline started (thread pool + multi-request infer)" << endl;
 }
 
 RP24YOLOWrapper::~RP24YOLOWrapper()
@@ -189,24 +189,16 @@ void RP24YOLOWrapper::processOneFrame(std::shared_ptr<YoloWork> work)
             }
         }
 
-        // 2. infer（OpenvinoInfer 非线程安全，串行保护）
-        // 计时拆分：yolo_infer 只算真正推理；等锁排队时间单独记 yolo_infer_wait，
-        // 否则流水线积压时 infer 数字会虚高（4 帧在飞排队 3 帧 + 自己）。
-        auto infer_wait_start = std::chrono::steady_clock::now();
-        std::chrono::steady_clock::time_point infer_start, infer_end;
-        {
-            std::lock_guard<std::mutex> lock(infer_mutex_);
-            infer_start = std::chrono::steady_clock::now();
-            work->objects = infer(work->infer_input, work->detect_color);
-            infer_end = std::chrono::steady_clock::now();
-        }
+        // 2. infer（OpenvinoInfer 请求池并发推理：多帧可同时算，无全局锁）
+        // 计时拆分：yolo_infer 只算真正推理；等待空闲请求的排队时间单独记 yolo_infer_wait
+        double infer_wait_ms = 0.0, infer_ms = 0.0;
+        work->objects = infer(work->infer_input, work->detect_color,
+                              &infer_wait_ms, &infer_ms);
         if (work->user_data != nullptr) {
             auto* pd = static_cast<AutoAimPipelineData*>(work->user_data);
             if (pd->initial.performance_profile) {
-                pd->initial.performance_profile->stages["yolo_infer"] +=
-                    PerformanceMonitor::durationMs(infer_start, infer_end);
-                pd->initial.performance_profile->stages["yolo_infer_wait"] +=
-                    PerformanceMonitor::durationMs(infer_wait_start, infer_start);
+                pd->initial.performance_profile->stages["yolo_infer"] += infer_ms;
+                pd->initial.performance_profile->stages["yolo_infer_wait"] += infer_wait_ms;
             }
         }
 
@@ -257,9 +249,9 @@ cv::Mat RP24YOLOWrapper::preprocess(const cv::Mat& frame) {
     return infer_frame;
 }
 
-vector<Object> RP24YOLOWrapper::infer(const cv::Mat& input, int detect_color) {
-    openvino_infer -> infer(input, detect_color);
-    return openvino_infer -> tmp_objects;
+vector<Object> RP24YOLOWrapper::infer(const cv::Mat& input, int detect_color,
+                                      double* wait_ms, double* infer_ms) {
+    return openvino_infer->infer(input, detect_color, wait_ms, infer_ms);
 }
 
 vector<Armor> RP24YOLOWrapper::postprocess(const cv::Mat& frame, const vector<Object>& objects, vector<int>* rp24_classes) {

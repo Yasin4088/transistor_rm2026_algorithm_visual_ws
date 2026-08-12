@@ -56,7 +56,9 @@ private:
 
     // ---------- 阶段函数（原有逻辑，保持不变） ----------
     cv::Mat preprocess(const cv::Mat& frame);
-    vector<Object> infer(const cv::Mat& input, int detect_color);
+    // OpenvinoInfer 内部请求池并发推理，无全局锁；wait_ms/infer_ms 为可选计时输出
+    vector<Object> infer(const cv::Mat& input, int detect_color,
+                         double* wait_ms = nullptr, double* infer_ms = nullptr);
     vector<Armor> postprocess(const cv::Mat& frame, const vector<Object>& objects, vector<int>* rp24_classes);
 
     // 线程池任务：一帧完整处理（preprocess -> infer -> postprocess -> 结果入队）
@@ -70,7 +72,6 @@ private:
     std::mutex results_mtx_;
     std::condition_variable results_cv_;
     std::function<void()> result_notify_;      // 受 results_mtx_ 保护
-    std::mutex infer_mutex_;                   // OpenvinoInfer 非线程安全，推理串行
     std::atomic<size_t> pending_tasks_{0};     // 在飞任务数（stop 时等待归零）
     std::atomic<bool> stopping_{false};
     std::atomic<uint64_t> next_frame_id_{0};
