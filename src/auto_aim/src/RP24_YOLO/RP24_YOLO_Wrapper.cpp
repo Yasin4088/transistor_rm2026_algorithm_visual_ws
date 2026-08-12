@@ -37,6 +37,7 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
         cerr << "[ERROR] Model file not found: " << model_path << endl;
         throw runtime_error("Model file not found");
     }
+    cout << "[INFO] RP24_YOLO model path: " << model_path << endl;
 
     // 检查是否已经有同名的 .xml 文件（避免重复转换）
     string base_path = model_path;
@@ -51,7 +52,7 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     FILE* f_bin = fopen(bin_path_str.c_str(), "r");
     if (f_xml && f_bin) {
         need_convert = false;
-        cout << "[INFO] IR files already exist, skipping conversion." << endl;
+        cout << "[INFO] IR files already exist, loading: " << xml_path_str << endl;
     }
     if (f_xml) fclose(f_xml);
     if (f_bin) fclose(f_bin);
