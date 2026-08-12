@@ -68,7 +68,7 @@ def main():
                     help="原始 ONNX 模型路径")
     ap.add_argument("--video", default="InputVideo/infantry_blue.mp4",
                     help="用于校准的视频路径")
-    ap.add_argument("--frames", type=int, default=120,
+    ap.add_argument("--frames", type=int, default=300,
                     help="校准抽样帧数")
     ap.add_argument("--output", default=None,
                     help="输出前缀（默认 <onnx 同目录>_int8）")
@@ -85,7 +85,11 @@ def main():
     nncf = require("nncf")
 
     print(f"[INFO] 加载 ONNX：{onnx_path}")
-    ov_model = ov.convert_model(str(onnx_path))
+    # 注意：用 read_model 而不是 ov.convert_model——与 C++ 端 FP32 路径一致，
+    # convert_model 可能改变输出布局（如 [1,25200,22] -> [1,22,25200]），
+    # 会导致 C++ 解码读到错位的关键点（表现为“Diagonals are parallel”）。
+    core = ov.Core()
+    ov_model = core.read_model(str(onnx_path))
 
     print("[INFO] 构建校准数据集 ...")
     calib_gen = build_calibration_gen(args.video, args.frames)
@@ -96,6 +100,21 @@ def main():
         nncf.Dataset(calib_gen),
         preset=nncf.quantization.QuantizationPreset.MIXED,
     )
+
+    # 自检：输出形状 + 数值是否有限 + 关键点列量级（提前发现量化把模型搞坏）
+    try:
+        compiled = ov.compile_model(quantized_model, "CPU")
+        probe = next(build_calibration_gen(args.video, 1))
+        raw = compiled(probe)
+        out_tensor = list(raw.values())[0]
+        arr = np.asarray(out_tensor)
+        print(f"[CHECK] 量化模型输出形状：{list(arr.shape)}")
+        print(f"[CHECK] 数值有限：{bool(np.isfinite(arr).all())}  "
+              f"min={float(np.min(arr)):.4f} max={float(np.max(arr)):.4f}")
+        if arr.ndim == 3 and arr.shape[1] < arr.shape[2]:
+            print("[WARN] 输出疑似转置布局 [N, 22, 25200]，C++ 解码会出错！")
+    except Exception as e:
+        print(f"[WARN] 自检失败（不影响保存）：{e}")
 
     out_xml = out_prefix.with_suffix(".xml")
     ov.save_model(quantized_model, str(out_xml))

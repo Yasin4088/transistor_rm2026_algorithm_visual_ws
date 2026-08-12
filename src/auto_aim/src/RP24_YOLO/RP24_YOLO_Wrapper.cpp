@@ -300,8 +300,14 @@ vector<Armor> RP24YOLOWrapper::postprocess(const cv::Mat& frame, const vector<Ob
 
         cv::RotatedRect leftLightBar(leftLightBar_center, leftLightBar_size, leftLightBar_angle);
         cv::RotatedRect rightLightBar(rightLightBar_center, rightLightBar_size, rightLightBar_angle);
-        armors.emplace_back(leftLightBar, rightLightBar, config_file_ptr, node);
-
+        try {
+            armors.emplace_back(leftLightBar, rightLightBar, config_file_ptr, node);
+        } catch (const std::exception& e) {
+            // 关键点退化（如对角线平行/共线）时跳过该装甲板，而不是丢弃整帧；
+            // 边缘视角的装甲板偶尔就会触发，模型退化时可能大面积出现。
+            RCLCPP_DEBUG(node->get_logger(), "Skip degenerate armor: %s", e.what());
+            continue;
+        }
         if (rp24_classes != nullptr) {
             rp24_classes->push_back(object.label);
         }
