@@ -59,7 +59,7 @@ def build_calibration_gen(video_path, count):
         for f in frames:
             yield {"images": f}
 
-    return gen
+    return gen()
 
 
 def main():
