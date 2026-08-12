@@ -194,49 +194,54 @@ void AutoAimPipeline::Stage1::drainResults()
 void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
                                           std::chrono::steady_clock::time_point now)
 {
-    std::unique_ptr<AutoAimPipelineData> d;
-    double latency_ms = 0.0;
+    struct Completed {
+        std::unique_ptr<AutoAimPipelineData> d;
+        RP24YOLOWrapper::YoloResult res;
+        double latency_ms = 0.0;
+    };
+    std::vector<Completed> completed;
     {
         std::lock_guard<std::mutex> lock(mtx);
-        auto it = std::find_if(in_flight_.begin(), in_flight_.end(),
-            [&](const InFlight& pf) { return pf.data.get() == res.user_data; });
-        if (it == in_flight_.end()) {
-            return;  // 已被处理（不应发生）
+        // 结果先入缓存（线程池任务可能乱序完成），再按提交顺序逐个消费。
+        // 绝不提前 drop 在飞帧：任务的 user_data 指向帧数据，帧被销毁后任务访问会段错误。
+        pending_results_[res.user_data] = std::move(res);
+
+        while (!in_flight_.empty()) {
+            auto it = pending_results_.find(in_flight_.front().data.get());
+            if (it == pending_results_.end()) {
+                break;  // 队首帧尚未完成，等待后续结果
+            }
+            Completed c;
+            c.latency_ms = std::chrono::duration<double, std::milli>(
+                now - in_flight_.front().submitted).count();
+            c.res = std::move(it->second);
+            pending_results_.erase(it);
+            c.d = std::move(in_flight_.front().data);
+            in_flight_.pop_front();
+            completed.push_back(std::move(c));
         }
+    }
 
-        // 提交顺序在它之前、结果仍未回的帧 = 被 latest-wins 覆盖丢弃 → 以空结果推进到 stage2
-        for (auto drop_it = in_flight_.begin(); drop_it != it; ++drop_it) {
-            std::unique_ptr<AutoAimPipelineData> dd = std::move(drop_it->data);
-            dd->stage1 = AutoAimPipelineData::Stage1Data{};
-            dd->stage1.used_yolo = true;
-            done_.push_back(std::move(dd));
+    // 锁外处理：classifyAndTrack 耗时，不应持锁
+    for (auto& c : completed) {
+        if (c.d->initial.performance_profile) {
+            c.d->initial.performance_profile->stages["stage1_2d_detect_classify"] += c.latency_ms;
         }
-
-        latency_ms = std::chrono::duration<double, std::milli>(now - it->submitted).count();
-        d = std::move(it->data);
-        // 关键：结果帧的条目也要一并移除，否则它带着空 data 留在 in_flight_，
-        // 下一次 drop 循环对空指针解引用会段错误
-        in_flight_.erase(in_flight_.begin(), it + 1);
+        c.d->stage1 = AutoAimPipelineData::Stage1Data{};
+        c.d->stage1.used_yolo = true;
+        c.d->stage1.armors = std::move(c.res.armors);
+        for (const Armor& armor : c.d->stage1.armors) {
+            c.d->stage1.lights.emplace_back(armor.leftLight);
+            c.d->stage1.lights.emplace_back(armor.rightLight);
+        }
+        c.d->stage1.classify_results = rp24_yolo_wrapper->classifyAndTrack(
+            c.d->stage1.armors, c.res.rp24_classes, c.d->initial.ground_stable_point);
     }
-
-    // 记录 stage1 耗时（提交 → 结果取回）到帧的 performance_profile（同学的监控机制）
-    if (d->initial.performance_profile) {
-        d->initial.performance_profile->stages["stage1_2d_detect_classify"] += latency_ms;
-    }
-
-    d->stage1 = AutoAimPipelineData::Stage1Data{};
-    d->stage1.used_yolo = true;
-    d->stage1.armors = std::move(res.armors);
-    for (const Armor& armor : d->stage1.armors) {
-        d->stage1.lights.emplace_back(armor.leftLight);
-        d->stage1.lights.emplace_back(armor.rightLight);
-    }
-    d->stage1.classify_results = rp24_yolo_wrapper->classifyAndTrack(
-        d->stage1.armors, res.rp24_classes, d->initial.ground_stable_point);
-
     {
         std::lock_guard<std::mutex> lock(mtx);
-        done_.push_back(std::move(d));
+        for (auto& c : completed) {
+            done_.push_back(std::move(c.d));
+        }
     }
 }
 

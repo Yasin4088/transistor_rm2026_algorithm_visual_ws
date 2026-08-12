@@ -10,6 +10,7 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
@@ -190,6 +191,9 @@ private:
         };
         std::deque<InFlight> in_flight_;                           // 已提交、结果未回
         std::deque<std::unique_ptr<AutoAimPipelineData>> done_;    // 结果已回、待交给 stage2
+        // 乱序完成的结果缓存：线程池任务可能乱序完成，按提交顺序消费前先暂存。
+        // 关键：不能提前 drop 在飞帧——任务的 user_data 指向帧数据，提前销毁会悬垂。
+        std::unordered_map<void*, RP24YOLOWrapper::YoloResult> pending_results_;
 
         Stage1(std::shared_ptr<YAML::Node> config_file_ptr,
                rclcpp::Node* node,
