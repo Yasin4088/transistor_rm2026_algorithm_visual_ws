@@ -130,6 +130,23 @@ bool RP24YOLOWrapper::tryTakeResult(YoloResult* out)
     return true;
 }
 
+void RP24YOLOWrapper::setResultNotify(std::function<void()> notify)
+{
+    std::lock_guard<std::mutex> lock(results_mtx_);
+    result_notify_ = std::move(notify);
+}
+
+void RP24YOLOWrapper::notifyResultAvailable()
+{
+    std::function<void()> fn;
+    {
+        std::lock_guard<std::mutex> lock(results_mtx_);
+        fn = result_notify_;
+    }
+    // 锁外回调：回调里会取 Stage1 的锁，不能在持有 results_mtx_ 时调用
+    if (fn) fn();
+}
+
 RP24YOLOWrapper::YoloResult RP24YOLOWrapper::takeResult(uint64_t frame_id)
 {
     YoloResult result;
@@ -206,6 +223,8 @@ void RP24YOLOWrapper::processOneFrame(std::shared_ptr<YoloWork> work)
                 results_.push_back(std::move(result));
             }
         }
+        // 事件唤醒：立即通知 Stage1 来取结果，替代调用方的 5ms 轮询
+        notifyResultAvailable();
     } catch (const std::exception& e) {
         RCLCPP_ERROR(node->get_logger(), "YOLO processOneFrame exception: %s", e.what());
     }

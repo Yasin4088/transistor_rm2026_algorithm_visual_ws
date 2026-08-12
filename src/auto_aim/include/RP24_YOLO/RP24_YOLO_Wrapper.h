@@ -7,6 +7,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <opencv2/opencv.hpp>
@@ -35,6 +36,8 @@ public:
     // 停止流水线（幂等）：关闭队列/寄存器并 join 三个线程
     void stop();
     bool tryTakeResult(YoloResult* out);   // 非阻塞取结果：有则 true，无则 false
+    // 结果就绪回调：有结果推入 results_ 时触发（事件唤醒，替代调用方轮询）
+    void setResultNotify(std::function<void()> notify);
     vector<ArmorResult> classifyAndTrack(vector<Armor> armors, const vector<int>& rp24_classes,
                                          const cv::Point2f& ground_stable_point);
 
@@ -58,12 +61,15 @@ private:
 
     // 线程池任务：一帧完整处理（preprocess -> infer -> postprocess -> 结果入队）
     void processOneFrame(std::shared_ptr<YoloWork> work);
+    // 结果就绪时触发 result_notify_（锁外调用回调）
+    void notifyResultAvailable();
 
     // ---------- 线程池流水线成员 ----------
     static constexpr size_t kMaxResults = 8;   // 结果队列上限（最新优先，满则丢最旧）
     std::deque<YoloResult> results_;           // 已完成的帧结果
     std::mutex results_mtx_;
     std::condition_variable results_cv_;
+    std::function<void()> result_notify_;      // 受 results_mtx_ 保护
     std::mutex infer_mutex_;                   // OpenvinoInfer 非线程安全，推理串行
     std::atomic<size_t> pending_tasks_{0};     // 在飞任务数（stop 时等待归零）
     std::atomic<bool> stopping_{false};

@@ -77,6 +77,14 @@ AutoAimPipeline::Stage1::Stage1(std::shared_ptr<YAML::Node> config_file_ptr,
         node,
         workspace_path / (*config_file_ptr)["RP24_YOLO_model_relative_path"].as<std::string>(),
         (*config_file_ptr)["RP24_YOLO_device"].as<std::string>());
+    // 事件唤醒：YOLO 结果就绪时置位并通知 stage1 线程（替代 5ms 轮询取结果）
+    rp24_yolo_wrapper->setResultNotify([this]() {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            result_wakeup_ = true;
+        }
+        cv.notify_one();
+    });
 }
 
 void AutoAimPipeline::Stage1::start(AutoAimPipelineData& d)
@@ -146,14 +154,17 @@ void AutoAimPipeline::Stage1::runAsync()
         bool got_input = false;
         {
             std::unique_lock<std::mutex> lock(mtx);
-            // 带超时等待：即使没有新输入也要定期醒来取回结果，
-            // 否则 4 帧在飞后调度器不再喂帧，结果会一直积压导致流水线冻结
-            cv.wait_for(lock, std::chrono::milliseconds(5),
-                        [this]() { return !inbox_.empty() || exit_flag; });
+            // 事件驱动等待：新输入 / YOLO 结果就绪 / 退出 任一发生即醒来。
+            // 结果就绪由 wrapper 回调置位 result_wakeup_ + notify_one 通知，
+            // 替代原先 5ms 超时轮询，最多可减少 5ms 帧延迟。
+            cv.wait(lock, [this]() {
+                return !inbox_.empty() || result_wakeup_ || exit_flag;
+            });
             if (exit_flag) {
                 flushAll();
                 return;
             }
+            result_wakeup_ = false;
             if (!inbox_.empty()) {
                 d = std::move(inbox_.front());
                 inbox_.pop_front();
@@ -234,8 +245,13 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
             c.d->stage1.lights.emplace_back(armor.leftLight);
             c.d->stage1.lights.emplace_back(armor.rightLight);
         }
+        const auto classify_start = PerfClock::now();
         c.d->stage1.classify_results = rp24_yolo_wrapper->classifyAndTrack(
             c.d->stage1.armors, c.res.rp24_classes, c.d->initial.ground_stable_point);
+        if (c.d->initial.performance_profile) {
+            c.d->initial.performance_profile->stages["stage1_classify_track"] +=
+                PerformanceMonitor::durationMs(classify_start, PerfClock::now());
+        }
     }
     {
         std::lock_guard<std::mutex> lock(mtx);

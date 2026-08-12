@@ -44,6 +44,7 @@ private:
 
     std::atomic<bool> enabled_;
     size_t report_interval_;
+    PerfTimePoint start_time_;   // 构造时刻，用于报告里打印进程运行时长
     mutable std::mutex history_mtx_;
     std::vector<FrameProfile> history_;
 };

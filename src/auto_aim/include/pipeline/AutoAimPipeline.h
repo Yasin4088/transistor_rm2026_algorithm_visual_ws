@@ -185,6 +185,7 @@ private:
 
         // ---- 异步路径（use_rp24_yolo = true）----
         std::deque<std::unique_ptr<AutoAimPipelineData>> inbox_;   // 待提交给 YOLO 的帧
+        bool result_wakeup_ = false;   // 受 mtx_ 保护：YOLO 结果就绪时置位（事件唤醒用）
         struct InFlight {
             std::unique_ptr<AutoAimPipelineData> data;
             std::chrono::steady_clock::time_point submitted;       // 提交时刻（算延迟）

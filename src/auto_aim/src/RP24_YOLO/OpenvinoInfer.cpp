@@ -4,8 +4,11 @@ OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, strin
     input_shape = {1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH), 3};
     // 限制 CPU 推理并行度：默认会占满所有逻辑核（16）且 TBB arena 大量自旋空转。
     // 单流 + 少量线程，避免 TBB 空转成为最大 CPU 热点。
+    // [实验] 4 -> 8：机器 16 逻辑核，原先单流只用 4 线程、多数核空闲。
+    // 先验证 8 线程能否把单帧 infer 从 ~10ms 压到 6-7ms；
+    // 若无效（模型小、同步开销主导），后续改回 4 并考虑并发多流方案。
     try {
-        core.set_property("CPU", ov::inference_num_threads(4));
+        core.set_property("CPU", ov::inference_num_threads(8));
         core.set_property("CPU", ov::num_streams(1));
     } catch (const std::exception& e) {
         std::cerr << "[OpenvinoInfer] set_property warning: " << e.what() << std::endl;
