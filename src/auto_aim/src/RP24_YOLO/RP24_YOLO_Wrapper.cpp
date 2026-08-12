@@ -66,7 +66,15 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     // -------------------- Step 2: 初始化推理器 --------------------
     // 使用 OpenvinoInfer 的第一个构造函数
     // （参考 OpenvinoInfer.cpp 中的实现：BGR输入 -> RGB -> 归一化 -> NCHW）
-    openvino_infer = std::make_shared<OpenvinoInfer>(xml_path_str, bin_path_str, device);
+    int infer_threads = 4, infer_streams = 1;
+    if ((*config_file_ptr)["RP24_YOLO_infer_threads"]) {
+        infer_threads = (*config_file_ptr)["RP24_YOLO_infer_threads"].as<int>();
+    }
+    if ((*config_file_ptr)["RP24_YOLO_infer_streams"]) {
+        infer_streams = (*config_file_ptr)["RP24_YOLO_infer_streams"].as<int>();
+    }
+    openvino_infer = std::make_shared<OpenvinoInfer>(
+        xml_path_str, bin_path_str, device, infer_threads, infer_streams);
     cout << "[INFO] Inference model loaded successfully!" << endl;
 
     armor_tracker = std::make_shared<ArmorTracker>(config_file_ptr, node);

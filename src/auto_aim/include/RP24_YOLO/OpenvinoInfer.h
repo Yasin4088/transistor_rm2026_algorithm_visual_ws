@@ -43,7 +43,9 @@ public:
     ov::Shape input_shape;
 
     OpenvinoInfer(){}
-    OpenvinoInfer(string model_path_xml, string model_path_bin, string device);
+    // infer_threads: CPU 推理线程数；num_streams: CPU 执行流数（>1 需配合多 InferRequest 并发）
+    OpenvinoInfer(string model_path_xml, string model_path_bin, string device,
+                  int infer_threads = 4, int num_streams = 1);
     void infer(Mat img,int detect_color);
     OpenvinoInfer(string model_path, string device){
         input_shape = {1, 1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH)};

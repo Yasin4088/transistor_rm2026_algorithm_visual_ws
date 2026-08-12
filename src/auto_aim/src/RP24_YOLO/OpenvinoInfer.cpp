@@ -1,15 +1,17 @@
 #include "RP24_YOLO/OpenvinoInfer.h"
 
-OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, string device){
+OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, string device,
+                             int infer_threads, int num_streams){
     input_shape = {1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH), 3};
     // 限制 CPU 推理并行度：默认会占满所有逻辑核（16）且 TBB arena 大量自旋空转。
     // 单流 + 少量线程，避免 TBB 空转成为最大 CPU 热点。
-    // [实验] 4 -> 8：机器 16 逻辑核，原先单流只用 4 线程、多数核空闲。
-    // 先验证 8 线程能否把单帧 infer 从 ~10ms 压到 6-7ms；
-    // 若无效（模型小、同步开销主导），后续改回 4 并考虑并发多流方案。
+    // [实验结论] 8 线程单流实测反而更慢（~17ms vs 4 线程 ~10ms），
+    // 小模型同步开销主导，单流加线程是死路。
+    // 线程/流数改为配置项 RP24_YOLO_infer_threads / RP24_YOLO_infer_streams，
+    // 后续提速方向：多流(num_streams>1) + 多 InferRequest 并发推理，而不是加单流线程。
     try {
-        core.set_property("CPU", ov::inference_num_threads(8));
-        core.set_property("CPU", ov::num_streams(1));
+        core.set_property("CPU", ov::inference_num_threads(infer_threads));
+        core.set_property("CPU", ov::num_streams(num_streams));
     } catch (const std::exception& e) {
         std::cerr << "[OpenvinoInfer] set_property warning: " << e.what() << std::endl;
     }

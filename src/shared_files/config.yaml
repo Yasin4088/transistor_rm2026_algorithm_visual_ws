@@ -20,6 +20,8 @@ classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/
 use_RP24_YOLO : false
 RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
 RP24_YOLO_device : "CPU"
+RP24_YOLO_infer_threads : 4 # OpenVINO CPU 推理线程数（小模型线程加多反而更慢，4/6/8 对比）
+RP24_YOLO_infer_streams : 1 # OpenVINO CPU 执行流数（>1 需配合多 InferRequest 并发改造）
 
 # ArmorDetect_Node 参数
 init_enemy_color : "BLUE" # 初始敌方颜色，连接至电控后会自动获取敌方颜色并覆盖此值
