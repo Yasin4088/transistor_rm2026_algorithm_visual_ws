@@ -190,17 +190,23 @@ void RP24YOLOWrapper::processOneFrame(std::shared_ptr<YoloWork> work)
         }
 
         // 2. infer（OpenvinoInfer 非线程安全，串行保护）
-        stage_start = std::chrono::steady_clock::now();
+        // 计时拆分：yolo_infer 只算真正推理；等锁排队时间单独记 yolo_infer_wait，
+        // 否则流水线积压时 infer 数字会虚高（4 帧在飞排队 3 帧 + 自己）。
+        auto infer_wait_start = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point infer_start, infer_end;
         {
             std::lock_guard<std::mutex> lock(infer_mutex_);
+            infer_start = std::chrono::steady_clock::now();
             work->objects = infer(work->infer_input, work->detect_color);
+            infer_end = std::chrono::steady_clock::now();
         }
-        stage_ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - stage_start).count();
         if (work->user_data != nullptr) {
             auto* pd = static_cast<AutoAimPipelineData*>(work->user_data);
             if (pd->initial.performance_profile) {
-                pd->initial.performance_profile->stages["yolo_infer"] += stage_ms;
+                pd->initial.performance_profile->stages["yolo_infer"] +=
+                    PerformanceMonitor::durationMs(infer_start, infer_end);
+                pd->initial.performance_profile->stages["yolo_infer_wait"] +=
+                    PerformanceMonitor::durationMs(infer_wait_start, infer_start);
             }
         }
 

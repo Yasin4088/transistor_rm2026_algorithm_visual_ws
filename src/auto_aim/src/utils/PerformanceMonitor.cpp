@@ -83,6 +83,7 @@ void PerformanceMonitor::printStatisticsLocked() const
         "stage1_2d_detect_classify",
         "yolo_preprocess",
         "yolo_infer",
+        "yolo_infer_wait",
         "yolo_postprocess",
         "stage2_3d_solve_transform",
         "stage3_predict_command",
