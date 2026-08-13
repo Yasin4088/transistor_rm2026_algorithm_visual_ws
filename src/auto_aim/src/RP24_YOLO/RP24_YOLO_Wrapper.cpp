@@ -78,7 +78,7 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
         input_size_ = (*config_file_ptr)["RP24_YOLO_input_size"].as<int>();
     }
     openvino_infer = std::make_shared<OpenvinoInfer>(
-        xml_path_str, bin_path_str, device, infer_threads, infer_streams);
+        xml_path_str, bin_path_str, device, infer_threads, infer_streams, input_size_);
     cout << "[INFO] Inference model loaded successfully!" << endl;
 
     armor_tracker = std::make_shared<ArmorTracker>(config_file_ptr, node);

@@ -31,7 +31,8 @@ struct Object
 
 class OpenvinoInfer {
 public:
-    // 模型输入尺寸（当前为 640 版 FasterNet-Pose；改 512 版时同步改为 512）
+    // 模型输入尺寸：仅旧版内联构造函数使用（legacy），
+    // 运行时尺寸由构造参数 input_size 决定（配置 RP24_YOLO_input_size，全仓库唯一真源）
     const int IMAGE_HEIGHT = 640;
     const int IMAGE_WIDTH = 640;
     double ans;
@@ -43,9 +44,10 @@ public:
 
     OpenvinoInfer(){}
     // infer_threads: CPU 推理总线程数（= 流数 × 每流线程数，如 8 = 2流 × 4线程）；
-    // num_streams: 执行流数 = 并发推理请求数（1 = 单请求串行）
+    // num_streams: 执行流数 = 并发推理请求数（1 = 单请求串行）；
+    // input_size: 模型输入边长（唯一尺寸来源，配置 RP24_YOLO_input_size）
     OpenvinoInfer(string model_path_xml, string model_path_bin, string device,
-                  int infer_threads = 4, int num_streams = 1);
+                  int infer_threads = 4, int num_streams = 1, int input_size = 640);
     // 线程安全：从请求池领一个空闲 InferRequest，推理+解码后返回结果，支持多帧并行。
     // wait_ms / infer_ms（可选输出）：等待空闲请求耗时 / 纯推理+解码耗时。
     std::vector<Object> infer(const cv::Mat& img, int detect_color,

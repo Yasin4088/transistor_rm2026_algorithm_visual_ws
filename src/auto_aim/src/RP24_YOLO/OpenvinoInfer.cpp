@@ -4,8 +4,8 @@
 #include <chrono>
 
 OpenvinoInfer::OpenvinoInfer(string model_path_xml, string model_path_bin, string device,
-                             int infer_threads, int num_streams){
-    input_shape = {1, static_cast<unsigned long>(IMAGE_HEIGHT), static_cast<unsigned long>(IMAGE_WIDTH), 3};
+                             int infer_threads, int num_streams, int input_size){
+    input_shape = {1, static_cast<unsigned long>(input_size), static_cast<unsigned long>(input_size), 3};
     // 限制 CPU 推理并行度：默认会占满所有逻辑核（16）且 TBB arena 大量自旋空转。
     // 单流 + 少量线程，避免 TBB 空转成为最大 CPU 热点。
     // [实验结论] 8 线程单流实测反而更慢（~17ms vs 4 线程 ~10ms），
