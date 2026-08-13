@@ -74,6 +74,9 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     if ((*config_file_ptr)["RP24_YOLO_infer_streams"]) {
         infer_streams = (*config_file_ptr)["RP24_YOLO_infer_streams"].as<int>();
     }
+    if ((*config_file_ptr)["RP24_YOLO_input_size"]) {
+        input_size_ = (*config_file_ptr)["RP24_YOLO_input_size"].as<int>();
+    }
     openvino_infer = std::make_shared<OpenvinoInfer>(
         xml_path_str, bin_path_str, device, infer_threads, infer_streams);
     cout << "[INFO] Inference model loaded successfully!" << endl;
@@ -244,9 +247,9 @@ void RP24YOLOWrapper::processOneFrame(std::shared_ptr<YoloWork> work)
 }
 
 cv::Mat RP24YOLOWrapper::preprocess(const cv::Mat& frame) {
-    // 1. 缩放到 640x640 进行推理（模型输入要求 640x640）
+    // 1. 缩放到 input_size_ x input_size_（模型输入尺寸，配置 RP24_YOLO_input_size）
     cv::Mat infer_frame;
-    cv::resize(frame, infer_frame, cv::Size(640, 640));
+    cv::resize(frame, infer_frame, cv::Size(input_size_, input_size_));
     return infer_frame;
 }
 
@@ -256,9 +259,9 @@ vector<Object> RP24YOLOWrapper::infer(const cv::Mat& input, int detect_color,
 }
 
 vector<Armor> RP24YOLOWrapper::postprocess(const cv::Mat& frame, const vector<Object>& objects, vector<int>* rp24_classes) {
-    // 2. 将检测结果的坐标从 640x640 映射回原图尺寸
-    float scale_x = (float)frame.cols / 640.0f;
-    float scale_y = (float)frame.rows / 640.0f;
+    // 2. 将检测结果的坐标从 input_size_ x input_size_ 映射回原图尺寸
+    float scale_x = (float)frame.cols / (float)input_size_;
+    float scale_y = (float)frame.rows / (float)input_size_;
     int img_w = frame.cols, img_h = frame.rows;
     vector<Object> objects_scaled = objects;
     for (auto& obj : objects_scaled) {

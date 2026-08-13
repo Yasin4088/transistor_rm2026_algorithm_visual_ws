@@ -31,8 +31,9 @@ struct Object
 
 class OpenvinoInfer {
 public:
-    const int IMAGE_HEIGHT = 640;
-    const int IMAGE_WIDTH = 640;
+    // 模型输入尺寸（当前为 512 版 FasterNet-Pose；改 640 版时同步改回 640）
+    const int IMAGE_HEIGHT = 512;
+    const int IMAGE_WIDTH = 512;
     double ans;
     std::shared_ptr<ov::Model> model;
     ov::Core core;

@@ -96,6 +96,7 @@ private:
     };
     std::shared_ptr<ArmorTracker> armor_tracker;
     int fix_armor_class_ = -1;
+    int input_size_ = 640;   // 模型输入边长（配置 RP24_YOLO_input_size，必须与模型一致）
 };
 
 #endif  // RP24_YOLO_WRAPPER_H
