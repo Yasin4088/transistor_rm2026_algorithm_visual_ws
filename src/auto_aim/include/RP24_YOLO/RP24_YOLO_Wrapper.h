@@ -92,7 +92,7 @@ private:
     // big_map: 大装甲板（G基地 / 1英雄 / Bb大符），测试后按实际调整
     bool big_map[17] = {
         true, true, false, false, false, false, false, false, true,
-        true, true, false, false, false, false, false, false, true
+        true, true, false, false, false, false, false, false
     };
     std::shared_ptr<ArmorTracker> armor_tracker;
     int fix_armor_class_ = -1;
