@@ -81,6 +81,7 @@ void PerformanceMonitor::printStatisticsLocked() const
     // 其余新出现的阶段（如 stage1_classify_track）按出现顺序排在后面
     const std::vector<std::string> preferred_order = {
         "stage1_2d_detect_classify",
+        "stage1_yolo_latency",
         "yolo_preprocess",
         "yolo_infer",
         "yolo_infer_wait",

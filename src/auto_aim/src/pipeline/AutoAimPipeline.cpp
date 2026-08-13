@@ -236,7 +236,9 @@ void AutoAimPipeline::Stage1::finishFrame(RP24YOLOWrapper::YoloResult& res,
     // 锁外处理：classifyAndTrack 耗时，不应持锁
     for (auto& c : completed) {
         if (c.d->initial.performance_profile) {
-            c.d->initial.performance_profile->stages["stage1_2d_detect_classify"] += c.latency_ms;
+            // YOLO 异步路径：记录帧从提交到结果就绪的总延迟（含排队+预处理+推理+后处理）。
+            // 名字用 stage1_yolo_latency，与 runLegacy 的传统视觉耗时区分开。
+            c.d->initial.performance_profile->stages["stage1_yolo_latency"] += c.latency_ms;
         }
         c.d->stage1 = AutoAimPipelineData::Stage1Data{};
         c.d->stage1.used_yolo = true;
