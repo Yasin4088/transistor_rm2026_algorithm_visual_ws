@@ -18,9 +18,9 @@ CLASSIFIER_SHM_KEY : 0x0250
 classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/model.xml"
 
 use_RP24_YOLO : false
-RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
+RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"   # 0526.onnx=FP32(默认)；切INT8改成 0526_int8.onnx
 RP24_YOLO_device : "CPU"
-RP24_YOLO_infer_threads : 8 # 推理总线程数（隔离实测8线程 7.5ms vs 4线程 16.7ms；INT8仅+15%已弃用）
+RP24_YOLO_infer_threads : 8 # 推理总线程数（隔离实测8线程 7.5ms vs 4线程 16.7ms）
 RP24_YOLO_infer_streams : 1 # 并发推理请求数（CPU并发实测无收益，保持单流）
 
 # ArmorDetect_Node 参数
