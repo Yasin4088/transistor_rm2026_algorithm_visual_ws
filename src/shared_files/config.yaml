@@ -19,7 +19,8 @@ classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/
 
 use_RP24_YOLO : true
 #RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
-RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"   # 旧 0526 模型（双格式解码自动识别；切FasterNet改 fasternet_pose_640.onnx）
+#RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"   # FP32 旧模型
+RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526_int8.onnx"   # 0526 的 INT8 量化版（双格式解码自动识别）
 
 RP24_YOLO_device : "CPU"
 RP24_YOLO_input_size : 640 # 模型输入边长，必须与模型一致（0526/FasterNet640=640，FasterNet512=512）
