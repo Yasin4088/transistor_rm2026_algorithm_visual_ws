@@ -84,6 +84,12 @@ std::vector<Object> OpenvinoInfer::infer(const cv::Mat& img, int detect_color,
     const auto infer_t0 = std::chrono::steady_clock::now();
 
     // 2. 推理 + 解码（全部局部变量，不写共享成员；输出缓冲属于 req，互不干扰）
+    // 新模型格式（Ultralytics FasterNet-P345_pose，onnxruntime QDQ INT8）：
+    //   输出 [1, 29, N]（N=8400@640 / 5376@512），channels-first：
+    //   0-3            box cx,cy,w,h（输入像素空间，已 DFL 解码）
+    //   4..4+nc-1      17 类得分（logits，需 sigmoid；无 objectness，取最大类得分做置信度）
+    //   4+nc..4+nc+7   4 关键点 x,y（输入像素空间，已解码）
+    //   类别 0-8 = 蓝色(B)，9-16 = 红色(R)，颜色内嵌于类别，无独立颜色通道
     std::vector<Object> objects;
     std::vector<Object> tmp_objects;
 
@@ -94,106 +100,67 @@ std::vector<Object> OpenvinoInfer::infer(const cv::Mat& img, int detect_color,
 
     auto output = req.get_output_tensor(0);
     ov::Shape output_shape = output.get_shape();
-    // 25200 x 85 Matrix
+    // output_buffer: rows=通道数(29)，cols=锚点数(8400) —— 注意与旧模型(锚点优先)相反
     cv::Mat output_buffer(output_shape[1], output_shape[2], CV_32F, output.data());
-    float conf_threshold = 0.65 ;
-    float nms_threshold = 0.45;
+    const int n_anchors  = output_buffer.cols;
+    const int n_channels = output_buffer.rows;
+    const int nc = n_channels - 4 - 8;   // 类别数 = 29 - 4 - 8 = 17
+    const int kClsStart   = 4;
+    const int kKptStart   = 4 + nc;
+    constexpr int kBlueClasses = 9;      // 类别 0-8 蓝色，9-16 红色
+    float conf_threshold = 0.65;
+    float nms_threshold  = 0.45;
     std::vector<cv::Rect> boxes;
-    std::vector<int> class_ids;
-    std::vector<float> class_scores;
     std::vector<float> confidences;
-    // cx,cy,w,h,confidence,c1,c2,...c80
-    for (int i = 0; i < output_buffer.rows; i++) {
-        //通过置信度阈值筛选
-        float confidence = output_buffer.at<float>(i, 8);
-        confidence = sigmoid(confidence);
-        if (confidence < conf_threshold)
-        {
-            continue;
+
+    for (int j = 0; j < n_anchors; ++j) {
+        // 无 objectness 分支：取最大类得分（sigmoid 后）作为置信度
+        float max_score = -1e9f;
+        int best_cls = -1;
+        for (int c = 0; c < nc; ++c) {
+            float s = sigmoid(output_buffer.at<float>(kClsStart + c, j));
+            if (s > max_score) { max_score = s; best_cls = c; }
         }
-        //颜色和类别独热向量
-        cv::Mat color_scores = output_buffer.row(i).colRange(9, 13);  //color
-        cv::Mat classes_scores = output_buffer.row(i).colRange(13, 22); //num
-        cv::Point class_id,color_id;
-        int _class_id,_color_id;
-        double score_color, score_num;
-        cv::minMaxLoc(classes_scores, NULL, &score_num, NULL, &class_id);
-        cv::minMaxLoc(color_scores, NULL, &score_color, NULL, &color_id);
-        // cout<<score_color<<" "<<color_id.x<<endl;
-        // cout<<score_num<<" "<<class_id.x<<endl;
-        // class score: 0~3
-    //    cout<<"class_id.x:"<<class_id.x<<endl;
-    //    cout<<"detect_color:"<<detect_color<<endl;
-        // None 或者Purple 丢掉
-        if(color_id.x == 2 || color_id.x == 3)
-        {
-            continue;
-        }
-        else if(detect_color == 0 && color_id.x == 1)   // detect blue
-        {
-            continue;
-        }
-        else if(detect_color == 1 && color_id.x == 0)   // detect red
-        {
-            continue;
-        }
-        _class_id = class_id.x;
-        _color_id = color_id.x;
+        if (best_cls < 0 || max_score < conf_threshold) continue;
+
+        // 敌方颜色过滤：类别前缀 B(0-8)/R(9-16)；detect_color: 0=敌方蓝 1=敌方红
+        const bool is_blue = (best_cls < kBlueClasses);
+        if (detect_color == 0 && !is_blue) continue;
+        if (detect_color == 1 && is_blue)  continue;
+
+        const float cx = output_buffer.at<float>(0, j);
+        const float cy = output_buffer.at<float>(1, j);
+        const float w  = output_buffer.at<float>(2, j);
+        const float h  = output_buffer.at<float>(3, j);
+
         Object obj;
-        obj.prob = confidence;
-        obj.color = _color_id;
-        obj.label = _class_id;
-        obj.landmarks[0]=output_buffer.at<float>(i, 0);
-        obj.landmarks[1]=output_buffer.at<float>(i, 1);
-        obj.landmarks[2]=output_buffer.at<float>(i, 2);
-        obj.landmarks[3]=output_buffer.at<float>(i, 3);
-        obj.landmarks[4]=output_buffer.at<float>(i, 4);
-        obj.landmarks[5]=output_buffer.at<float>(i, 5);
-        obj.landmarks[6]=output_buffer.at<float>(i, 6);
-        obj.landmarks[7]=output_buffer.at<float>(i, 7);
-        obj.length = cv::norm(cv::Point2f(obj.landmarks[0] - obj.landmarks[6])-cv::Point2f(obj.landmarks[1]-obj.landmarks[7]));
-        obj.width = cv::norm(cv::Point2f(obj.landmarks[0] - obj.landmarks[2])-cv::Point2f(obj.landmarks[1]-obj.landmarks[3]));
-        obj.ratio = obj.length / obj.width;
-
-        std::vector<cv::Point2f> points;
-        //landmarks为左上逆时针，points应为左上顺时针
-        points.push_back(cv::Point2f(obj.landmarks[0], obj.landmarks[1]));
-        points.push_back(cv::Point2f(obj.landmarks[6], obj.landmarks[7]));
-        points.push_back(cv::Point2f( obj.landmarks[4], obj.landmarks[5]));
-        points.push_back(cv::Point2f( obj.landmarks[2], obj.landmarks[3]));
-
-        // Find the minimum and maximum x and y coordinates
-        float min_x = points[0].x;
-        float max_x = points[0].x;
-        float min_y = points[0].y;
-        float max_y = points[0].y;
-
-        for (int i = 1; i < points.size(); i++)
-        {
-            if (points[i].x < min_x)
-                min_x = points[i].x;
-            if (points[i].x > max_x)
-                max_x = points[i].x;
-            if (points[i].y < min_y)
-                min_y = points[i].y;
-            if (points[i].y > max_y)
-                max_y = points[i].y;
+        obj.prob  = max_score;
+        obj.color = is_blue ? 1 : 0;   // 沿用旧约定：blue:1, red:0
+        obj.label = best_cls;
+        for (int k = 0; k < 8; ++k) {
+            obj.landmarks[k] = output_buffer.at<float>(kKptStart + k, j);
         }
+        // 关键点顺序假设与旧模型一致：[左灯条上, 左灯条下, 右灯条上, 右灯条下]
+        // （若新数据集标注顺序不同，只需调整这里的取点下标）
+        obj.length = cv::norm(cv::Point2f(obj.landmarks[0] - obj.landmarks[2],
+                                          obj.landmarks[1] - obj.landmarks[3]));
+        obj.width  = cv::norm(cv::Point2f(obj.landmarks[0] - obj.landmarks[4],
+                                          obj.landmarks[1] - obj.landmarks[5]));
+        obj.ratio  = obj.length / obj.width;
 
-        // Create the rectangle
-        cv::Rect rect(min_x, min_y, max_x - min_x, max_y - min_y);
+        // box 输出 cxcywh（输入空间）→ 左上角 + 宽高
+        cv::Rect rect((int)(cx - w * 0.5f), (int)(cy - h * 0.5f), (int)w, (int)h);
         obj.rect = rect;
         objects.push_back(obj);
         boxes.push_back(rect);
-        confidences.push_back(score_num);
+        confidences.push_back(max_score);
     }
-    // NMS
-//        std::cout<<"object_size: "<<objects.size()<<endl;
+
+    // NMS（输入空间坐标）
     std::vector<int> indices;
     cv::dnn::NMSBoxes(boxes, confidences, conf_threshold, nms_threshold, indices);
-    int index = 0, index_indices = 0;
-    for(int valid_index:indices){
-        if(valid_index <= objects.size()){
+    for (int valid_index : indices) {
+        if (valid_index < (int)objects.size()) {
             tmp_objects.push_back(objects[valid_index]);
         }
     }
