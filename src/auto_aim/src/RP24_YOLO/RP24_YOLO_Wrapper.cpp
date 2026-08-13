@@ -77,6 +77,8 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     if ((*config_file_ptr)["RP24_YOLO_input_size"]) {
         input_size_ = (*config_file_ptr)["RP24_YOLO_input_size"].as<int>();
     }
+    // 根据模型路径选择类别映射：含 "fasternet" 用 17 类，否则用旧 0526 的 9 类
+    is_fasternet_model_ = (model_path.find("fasternet") != std::string::npos);
     openvino_infer = std::make_shared<OpenvinoInfer>(
         xml_path_str, bin_path_str, device, infer_threads, infer_streams, input_size_);
     cout << "[INFO] Inference model loaded successfully!" << endl;
@@ -358,8 +360,15 @@ vector<ArmorResult> RP24YOLOWrapper::classifyAndTrack(
     armor_tracker -> preProcess(ground_stable_point);
     for (size_t i = 0; i < armors.size(); i++) {
         Armor& armor = armors[i];
-        int number = class_map[rp24_classes[i]];
-        bool is_large = big_map[rp24_classes[i]];
+        int number;
+        bool is_large;
+        if (is_fasternet_model_) {
+            number = class_map_fasternet[rp24_classes[i]];
+            is_large = big_map_fasternet[rp24_classes[i]];
+        } else {
+            number = class_map_legacy[rp24_classes[i]];
+            is_large = big_map_legacy[rp24_classes[i]];
+        }
         if (fix_armor_class_ >= 0) {
             number = fix_armor_class_;
         }

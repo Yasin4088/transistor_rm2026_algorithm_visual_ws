@@ -85,15 +85,19 @@ private:
     // 类别语义: 0=G(基地) 1=1(英雄) 2=2(工程) 3=3 4=4 5=5 6=O(前哨站) 7=Bs(小符) 8=Bb(大符)
     // class_map: 类别 → ArmorType（Base=7, Hero=0, Engineer=1, Infantry1=2, Infantry2=3,
     //            Infantry3=4, Sentry=5, Outpost=6）
-    int class_map[17] = {
+    int class_map_fasternet[17] = {
         7, 0, 1, 2, 3, 4, 6, 5, 7,
         7, 0, 1, 2, 3, 4, 6, 5
     };
     // big_map: 大装甲板（G基地 / 1英雄 / Bb大符），测试后按实际调整
-    bool big_map[17] = {
+    bool big_map_fasternet[17] = {
         true, true, false, false, false, false, false, false, true,
         true, true, false, false, false, false, false, false
     };
+    // 旧 0526 模型（9类，颜色分列）：类别 → ArmorType 编号
+    int class_map_legacy[9] = {5, 0, 1, 2, 3, 4, 6, 7, 7};
+    bool big_map_legacy[9] = {false, true, false, false, false, false, false, false, true};
+    bool is_fasternet_model_ = false;   // 模型路径含 "fasternet" 时为 true（决定用哪套映射）
     std::shared_ptr<ArmorTracker> armor_tracker;
     int fix_armor_class_ = -1;
     int input_size_ = 640;   // 模型输入边长（配置 RP24_YOLO_input_size，必须与模型一致）

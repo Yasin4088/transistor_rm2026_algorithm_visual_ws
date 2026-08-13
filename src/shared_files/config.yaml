@@ -19,10 +19,10 @@ classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/
 
 use_RP24_YOLO : true
 #RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
-RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/fasternet_pose_640.onnx"   # FasterNet-P345_pose 640（QDQ INT8）
+RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"   # 旧 0526 模型（双格式解码自动识别；切FasterNet改 fasternet_pose_640.onnx）
 
 RP24_YOLO_device : "CPU"
-RP24_YOLO_input_size : 640 # 模型输入边长，必须与模型一致（512 或 640）
+RP24_YOLO_input_size : 640 # 模型输入边长，必须与模型一致（0526/FasterNet640=640，FasterNet512=512）
 RP24_YOLO_infer_threads : 8 # 推理总线程数（隔离实测8线程 7.5ms vs 4线程 16.7ms）
 RP24_YOLO_infer_streams : 1 # 并发推理请求数（CPU并发实测无收益，保持单流）
 
