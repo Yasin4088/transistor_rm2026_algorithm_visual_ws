@@ -26,6 +26,11 @@ RP24_YOLO_input_size : 640 # 模型输入边长，必须与模型一致（0526/F
 RP24_YOLO_infer_threads : 8 # 推理总线程数（隔离实测8线程 7.5ms vs 4线程 16.7ms）
 RP24_YOLO_infer_streams : 1 # 并发推理请求数（CPU并发实测无收益，保持单流）
 
+# ---------- 备用：RP24 0526 INT8（换回时：注释上面同济三行，取消下面三行注释）----------
+#RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526_int8.onnx"   # 0526 INT8（RP24 系，双格式解码自动识别）
+#RP24_YOLO_model_family : "rp24"
+#RP24_YOLO_letterbox : false   # RP24 直接拉伸，不启用 letterbox
+
 # ArmorDetect_Node 参数
 init_enemy_color : "BLUE" # 初始敌方颜色，连接至电控后会自动获取敌方颜色并覆盖此值
 max_armor_position_height : 1500.0 # 最大装甲板高度，超过此值视为无效
