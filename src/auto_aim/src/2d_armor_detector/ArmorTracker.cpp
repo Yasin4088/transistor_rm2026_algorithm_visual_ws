@@ -5,13 +5,14 @@
 ArmorTracker::ArmorTracker(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node) 
 : config_file_ptr(config_file_ptr), node(node) {
 
-    classify_classes = (*config_file_ptr)["classify_classes"].as<int>();
+    classify_classes = (*config_file_ptr)["armor_classifier"]["classify_classes"].as<int>();
 
-    MAX_TRACKING_AGE_MS = (*config_file_ptr)["MAX_TRACKING_AGE_MS"].as<int>();
-    MIN_TRACKING_COUNT = (*config_file_ptr)["MIN_TRACKING_COUNT"].as<int>();
-    IS_NEAR_MAX_DIST_RATIO = (*config_file_ptr)["IS_NEAR_MAX_DIST_RATIO"].as<float>();
-    armor_tracker_fit_step = (*config_file_ptr)["armor_tracker_fit_step"].as<int>();
-    armor_tracker_predict_step = (*config_file_ptr)["armor_tracker_predict_step"].as<int>();
+    const YAML::Node& tracker_cfg = (*config_file_ptr)["armor_tracker"];
+    MAX_TRACKING_AGE_MS = tracker_cfg["max_tracking_age_ms"].as<int>();
+    MIN_TRACKING_COUNT = tracker_cfg["min_tracking_count"].as<int>();
+    IS_NEAR_MAX_DIST_RATIO = tracker_cfg["is_near_max_dist_ratio"].as<float>();
+    armor_tracker_fit_step = tracker_cfg["fit_step"].as<int>();
+    armor_tracker_predict_step = tracker_cfg["predict_step"].as<int>();
     
 }
 

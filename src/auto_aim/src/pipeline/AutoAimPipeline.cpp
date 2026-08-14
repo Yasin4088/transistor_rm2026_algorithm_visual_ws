@@ -12,14 +12,14 @@ Params loadDetectorParams(const std::shared_ptr<YAML::Node>& config_file_ptr, st
 {
     Params params;
 
-    const int fix_enemy_color = (*config_file_ptr)["FIX_ENEMY_COLOR"].as<int>();
+    const int fix_enemy_color = (*config_file_ptr)["auto_aim_macro"]["control"]["fix_enemy_color"].as<int>();
     std::string enemy_color;
     if (fix_enemy_color == 0) {
         enemy_color = "RED";
     } else if (fix_enemy_color == 1) {
         enemy_color = "BLUE";
     } else {
-        enemy_color = (*config_file_ptr)["init_enemy_color"].as<std::string>();
+        enemy_color = (*config_file_ptr)["armor_detect_node"]["init_enemy_color"].as<std::string>();
     }
 
     if (enemy_color == "RED") {
@@ -35,12 +35,12 @@ Params loadDetectorParams(const std::shared_ptr<YAML::Node>& config_file_ptr, st
         params.enemy_color = Params::GREEN;
     }
 
-    params.min_light_height = (*config_file_ptr)["min_light_height"].as<int>();
-    params.light_min_area = (*config_file_ptr)["light_min_area"].as<int>();
-    params.light_max_area = (*config_file_ptr)["light_max_area"].as<int>();
-    params.max_light_wh_ratio = (*config_file_ptr)["max_light_wh_ratio"].as<float>();
-    params.min_light_wh_ratio = (*config_file_ptr)["min_light_wh_ratio"].as<float>();
-    params.light_max_tilt_angle = (*config_file_ptr)["light_max_tilt_angle"].as<float>();
+    params.min_light_height = (*config_file_ptr)["detector_params"]["min_light_height"].as<int>();
+    params.light_min_area = (*config_file_ptr)["detector_params"]["light_min_area"].as<int>();
+    params.light_max_area = (*config_file_ptr)["detector_params"]["light_max_area"].as<int>();
+    params.max_light_wh_ratio = (*config_file_ptr)["detector_params"]["max_light_wh_ratio"].as<float>();
+    params.min_light_wh_ratio = (*config_file_ptr)["detector_params"]["min_light_wh_ratio"].as<float>();
+    params.light_max_tilt_angle = (*config_file_ptr)["detector_params"]["light_max_tilt_angle"].as<float>();
 
     if (enemy_color_out) {
         *enemy_color_out = enemy_color;
@@ -68,15 +68,15 @@ AutoAimPipeline::Stage1::Stage1(std::shared_ptr<YAML::Node> config_file_ptr,
     std::string init_enemy_color;
     Params params = loadDetectorParams(config_file_ptr, &init_enemy_color);
 
-    use_rp24_yolo = (*config_file_ptr)["use_RP24_YOLO"].as<bool>();
+    use_rp24_yolo = (*config_file_ptr)["yolo"]["use_rp24_yolo"].as<bool>();
     light_detector = std::make_shared<LightBarDetector>(params, config_file_ptr, node);
     armor_detector = std::make_shared<ArmorDetector>(config_file_ptr, node);
     classifier = std::make_shared<ArmorClassifier>(config_file_ptr, node, workspace_path);
     rp24_yolo_wrapper = std::make_shared<RP24YOLOWrapper>(
         config_file_ptr,
         node,
-        workspace_path / (*config_file_ptr)["RP24_YOLO_model_relative_path"].as<std::string>(),
-        (*config_file_ptr)["RP24_YOLO_device"].as<std::string>());
+        workspace_path / (*config_file_ptr)["yolo"]["model_relative_path"].as<std::string>(),
+        (*config_file_ptr)["yolo"]["device"].as<std::string>());
 }
 
 void AutoAimPipeline::Stage1::start(AutoAimPipelineData& d)
@@ -287,7 +287,7 @@ AutoAimPipeline::Stage2::Stage2(std::shared_ptr<YAML::Node> config_file_ptr,
     rest_frame = std::make_shared<RestFrame>();
     rest_frame->updateCamOrientation(0, 0, 0);
     rest_frame->updateCamPosition(0, 0, 0);
-    max_armor_position_height = (*config_file_ptr)["max_armor_position_height"].as<float>();
+    max_armor_position_height = (*config_file_ptr)["armor_detect_node"]["max_armor_position_height"].as<float>();
 }
 
 void AutoAimPipeline::Stage2::start(AutoAimPipelineData& d)
@@ -449,8 +449,8 @@ AutoAimPipeline::Stage4::Stage4(std::shared_ptr<YAML::Node> config_file_ptr,
 {
     (void)node;
     visualizer_config = VisualizerConfig::fromYaml(*config_file_ptr);
-    log_result_video = (*config_file_ptr)["LOG_RESULT_VIDEO"].as<bool>();
-    log_origin_video = (*config_file_ptr)["LOG_ORIGIN_VIDEO"].as<bool>();
+    log_result_video = (*config_file_ptr)["auto_aim_macro"]["log"]["log_result_video"].as<bool>();
+    log_origin_video = (*config_file_ptr)["auto_aim_macro"]["log"]["log_origin_video"].as<bool>();
     if (visualizer_config.enable && visualizer_config.log_video &&
         (log_result_video || log_origin_video)) {
         two_video_logger = std::make_shared<TwoVideoLogger>(

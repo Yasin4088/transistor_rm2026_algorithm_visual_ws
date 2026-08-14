@@ -37,9 +37,10 @@ public:
         initCameraMatrix(config_file_ptr, node);
         initArmorPoints();
 
-        delta_x_ = (*config_file_ptr)["delta_x_"].as<float>();
-        delta_y_ = (*config_file_ptr)["delta_y_"].as<float>();
-        delta_z_ = (*config_file_ptr)["delta_z_"].as<float>();
+        const YAML::Node& mount_offset = (*config_file_ptr)["solver"]["mount_offset"];
+        delta_x_ = mount_offset["delta_x"].as<float>();
+        delta_y_ = mount_offset["delta_y"].as<float>();
+        delta_z_ = mount_offset["delta_z"].as<float>();
 
     }
     // 新增3D到像素坐标投影函数

@@ -9,17 +9,16 @@
 ArmorClassifier::ArmorClassifier(std::shared_ptr<YAML::Node> config_file_ptr, rclcpp::Node* node, fs::path ws_dir_path) 
     : node(node), ws_dir_path(ws_dir_path) {
     
-    MAX_ROI_SAVE_COUNT = (*config_file_ptr)["MAX_ROI_SAVE_COUNT"].as<int>();
+    const YAML::Node& cls_cfg = (*config_file_ptr)["armor_classifier"];
+    MAX_ROI_SAVE_COUNT = cls_cfg["max_roi_save_count"].as<int>();
 
-    IS_ARMOR_THRESHOLD = (*config_file_ptr)["IS_ARMOR_THRESHOLD"].as<float>();
-    IS_LARGE_THRESHOLD = (*config_file_ptr)["IS_LARGE_THRESHOLD"].as<float>();
-    CLASSIFY_THRESHOLD = (*config_file_ptr)["CLASSIFY_THRESHOLD"].as<float>();
-    INPUT_HEIGHT = (*config_file_ptr)["INPUT_HEIGHT"].as<int>();
-    INPUT_WIDTH = (*config_file_ptr)["INPUT_WIDTH"].as<int>();
-    filter_armor_class_mask_ =
-        (*config_file_ptr)["FILTER_ARMOR_CLASS"] ? (*config_file_ptr)["FILTER_ARMOR_CLASS"].as<int>() : 0;
-    fix_armor_class_ =
-        (*config_file_ptr)["FIX_ARMOR_CLASS"] ? (*config_file_ptr)["FIX_ARMOR_CLASS"].as<int>() : -1;
+    IS_ARMOR_THRESHOLD = cls_cfg["is_armor_threshold"].as<float>();
+    IS_LARGE_THRESHOLD = cls_cfg["is_large_threshold"].as<float>();
+    CLASSIFY_THRESHOLD = cls_cfg["classify_threshold"].as<float>();
+    INPUT_HEIGHT = cls_cfg["input_height"].as<int>();
+    INPUT_WIDTH = cls_cfg["input_width"].as<int>();
+    filter_armor_class_mask_ = (*config_file_ptr)["auto_aim_macro"]["control"]["filter_armor_class"].as<int>();
+    fix_armor_class_ = (*config_file_ptr)["auto_aim_macro"]["control"]["fix_armor_class"].as<int>();
 
     shm_python_classifier = std::make_shared<SharedMemoryClassifier>(config_file_ptr);
     armor_tracker = std::make_shared<ArmorTracker>(config_file_ptr, node);

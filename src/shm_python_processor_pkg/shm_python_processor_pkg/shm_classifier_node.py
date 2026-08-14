@@ -102,8 +102,8 @@ class ShmPytorchProcessorNode(Node):
         with open(config_file_path, 'r', encoding='utf-8') as config_file:
             config_data = yaml.safe_load(config_file)
 
-        self.CLASSIFIER_SHM_KEY = int(config_data["CLASSIFIER_SHM_KEY"])
-        classifier_model_relative_path = config_data["classifier_model_relative_path"]
+        self.CLASSIFIER_SHM_KEY = int(config_data["shared_memory_classifier"]["shm_key"])
+        classifier_model_relative_path = config_data["shared_memory_classifier"]["model_relative_path"]
         model_path = os.path.join(ws_dir_path, classifier_model_relative_path)
         
         # 定义与C++完全一致的内存结构
