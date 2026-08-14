@@ -28,6 +28,13 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     : config_file_ptr(config_file_ptr), node(node) {
     fix_armor_class_ =
         (*config_file_ptr)["FIX_ARMOR_CLASS"] ? (*config_file_ptr)["FIX_ARMOR_CLASS"].as<int>() : -1;
+    letterbox_ =
+        (*config_file_ptr)["RP24_YOLO_letterbox"] ? (*config_file_ptr)["RP24_YOLO_letterbox"].as<bool>() : false;
+    string model_family = "rp24";
+    if ((*config_file_ptr)["RP24_YOLO_model_family"]) {
+        model_family = (*config_file_ptr)["RP24_YOLO_model_family"].as<string>();
+    }
+    tongji_model_ = (model_family == "tongji_yolov5");
 
     // -------------------- Step 1: 模型转换（ONNX -> IR） --------------------
     // 检查模型文件是否存在
@@ -39,12 +46,21 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     }
     cout << "[INFO] RP24_YOLO model path: " << model_path << endl;
 
-    // 检查是否已经有同名的 .xml 文件（避免重复转换）
-    string base_path = model_path;
-    size_t dot_pos = base_path.rfind(".onnx");
-    if (dot_pos != string::npos) base_path = base_path.substr(0, dot_pos);
-    string xml_path_str = base_path + ".xml";
-    string bin_path_str = base_path + ".bin";
+    // 直接传 .xml（如同济 yolov5 的 IR 文件）时跳过 ONNX->IR 转换；
+    // 传 .onnx 时仍走原有转换流程（首次运行生成同名 .xml/.bin 缓存）。
+    string xml_path_str, bin_path_str;
+    const bool is_ir = (model_path.size() > 4 &&
+                        model_path.compare(model_path.size() - 4, 4, ".xml") == 0);
+    if (is_ir) {
+        xml_path_str = model_path;
+        bin_path_str = model_path.substr(0, model_path.size() - 4) + ".bin";
+    } else {
+        string base_path = model_path;
+        size_t dot_pos = base_path.rfind(".onnx");
+        if (dot_pos != string::npos) base_path = base_path.substr(0, dot_pos);
+        xml_path_str = base_path + ".xml";
+        bin_path_str = base_path + ".bin";
+    }
 
     // 检查 .xml 和 .bin 是否都已存在
     bool need_convert = true;
@@ -58,6 +74,10 @@ RP24YOLOWrapper::RP24YOLOWrapper(std::shared_ptr<YAML::Node> config_file_ptr, rc
     if (f_bin) fclose(f_bin);
 
     if (need_convert) {
+        if (is_ir) {
+            cerr << "[ERROR] IR files not found: " << xml_path_str << " / " << bin_path_str << endl;
+            throw runtime_error("IR model files not found");
+        }
         auto [xml_path, bin_path] = convertOnnxToIR(model_path);
         xml_path_str = xml_path;
         bin_path_str = bin_path;
@@ -249,6 +269,16 @@ void RP24YOLOWrapper::processOneFrame(std::shared_ptr<YoloWork> work)
 }
 
 cv::Mat RP24YOLOWrapper::preprocess(const cv::Mat& frame) {
+    if (letterbox_) {
+        // letterbox：等比缩放后置于左上角，右下补零（与同济 yolov5 训练/后处理约定一致）
+        const float scale = std::min(
+            (float)input_size_ / (float)frame.rows, (float)input_size_ / (float)frame.cols);
+        const int w = std::max(1, (int)(frame.cols * scale));
+        const int h = std::max(1, (int)(frame.rows * scale));
+        cv::Mat infer_frame(input_size_, input_size_, CV_8UC3, cv::Scalar(0, 0, 0));
+        cv::resize(frame, infer_frame(cv::Rect(0, 0, w, h)), cv::Size(w, h));
+        return infer_frame;
+    }
     // 1. 缩放到 input_size_ x input_size_（模型输入尺寸，配置 RP24_YOLO_input_size）
     cv::Mat infer_frame;
     cv::resize(frame, infer_frame, cv::Size(input_size_, input_size_));
@@ -264,6 +294,13 @@ vector<Armor> RP24YOLOWrapper::postprocess(const cv::Mat& frame, const vector<Ob
     // 2. 将检测结果的坐标从 input_size_ x input_size_ 映射回原图尺寸
     float scale_x = (float)frame.cols / (float)input_size_;
     float scale_y = (float)frame.rows / (float)input_size_;
+    if (letterbox_) {
+        // 同济约定：letterbox 等比缩放（无拉伸），坐标统一除以缩放系数
+        const float scale = std::min(
+            (float)input_size_ / (float)frame.rows, (float)input_size_ / (float)frame.cols);
+        scale_x = 1.0f / scale;
+        scale_y = scale_x;
+    }
     int img_w = frame.cols, img_h = frame.rows;
     vector<Object> objects_scaled = objects;
     for (auto& obj : objects_scaled) {
@@ -288,6 +325,7 @@ vector<Armor> RP24YOLOWrapper::postprocess(const cv::Mat& frame, const vector<Ob
     vector<Armor> armors;
 
     for (Object& object : objects_scaled) {
+        if (tongji_model_ && object.label == 8) continue;  // 同济第9类为"非装甲板"，过滤
         std::vector<float> frame_keypoints(object.landmarks, object.landmarks + 8);
 
         RCLCPP_DEBUG(node->get_logger(), "scaled_yolo_data: %f, %f, %f, %f, %f, %f, %f, %f",
@@ -380,4 +418,3 @@ vector<ArmorResult> RP24YOLOWrapper::classifyAndTrack(
 
     return armor_tracker -> afterProcess();
 }
-

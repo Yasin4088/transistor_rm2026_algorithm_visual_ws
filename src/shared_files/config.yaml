@@ -17,12 +17,11 @@ FIX_ARMOR_CLASS : -1 # 强制装甲板类别，-1表示不强制，0~7表示强�
 CLASSIFIER_SHM_KEY : 0x0250
 classifier_model_relative_path : "src/shared_files/models/model_rm2026_openvino/model.xml"
 
-use_RP24_YOLO : true
-#RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"
-#RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526.onnx"   # FP32 旧模型
-RP24_YOLO_model_relative_path : "src/shared_files/models/RP24_YOLO/0526_int8.onnx"   # 0526 的 INT8 量化版（双格式解码自动识别）
-
+use_RP24_YOLO : true # 改为 true 启用 YOLO 检测管线（当前为同济 yolov5）
+RP24_YOLO_model_relative_path : "src/shared_files/models/yolov5_tongji.xml" # 同济yolov5 IR；换回RP24请改回 onnx 路径
 RP24_YOLO_device : "CPU"
+RP24_YOLO_model_family : "tongji_yolov5" # rp24 或 tongji_yolov5（同济模型颜色/类别语义不同）
+RP24_YOLO_letterbox : true # 同济模型训练时用 letterbox，需保持一致
 RP24_YOLO_input_size : 640 # 模型输入边长，必须与模型一致（0526/FasterNet640=640，FasterNet512=512）
 RP24_YOLO_infer_threads : 8 # 推理总线程数（隔离实测8线程 7.5ms vs 4线程 16.7ms）
 RP24_YOLO_infer_streams : 1 # 并发推理请求数（CPU并发实测无收益，保持单流）
@@ -150,4 +149,3 @@ MIN_TRACKING_COUNT : 2     # 最小连续跟踪次数           // 2
 IS_NEAR_MAX_DIST_RATIO : 1.5     # 50.0
 armor_tracker_fit_step : 5
 armor_tracker_predict_step : 5
-

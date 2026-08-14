@@ -94,10 +94,14 @@ private:
         true, true, false, false, false, false, false, false, true,
         true, true, false, false, false, false, false, false
     };
-    // 旧 0526 模型（9类，颜色分列）：类别 → ArmorType 编号
+    // 旧 0526 模型（9类，颜色分列）：类别 → ArmorType 编号（同济 yolov5 同为该布局）
     int class_map_legacy[9] = {5, 0, 1, 2, 3, 4, 6, 7, 7};
     bool big_map_legacy[9] = {false, true, false, false, false, false, false, false, true};
     bool is_fasternet_model_ = false;   // 模型路径含 "fasternet" 时为 true（决定用哪套映射）
+
+    // ---------- 模型族适配 ----------
+    bool letterbox_ = false;     // 使用 letterbox 预处理（同济 yolov5 需要，RP24 保持拉伸）
+    bool tongji_model_ = false;  // 同济 yolov5（0=蓝 1=红，第9类=非装甲板需过滤）
     std::shared_ptr<ArmorTracker> armor_tracker;
     int fix_armor_class_ = -1;
     int input_size_ = 640;   // 模型输入边长（配置 RP24_YOLO_input_size，必须与模型一致）
