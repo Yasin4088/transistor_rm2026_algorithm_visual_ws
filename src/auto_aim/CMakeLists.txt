@@ -30,6 +30,7 @@ find_package(Sophus REQUIRED)
 find_package(fmt REQUIRED)
 
 find_package(OpenVINO REQUIRED)
+find_package(Ceres REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Point2f.msg"
@@ -87,6 +88,7 @@ add_library(armor_detector SHARED
     src/communication/SharedMemoryClassifier.cpp
     # src/communication/SharedMemoryYOLOPose.cpp
     src/communication/Com.cpp
+    src/communication/TorqueBridge.cpp
     src/communication/CRC.cpp
     src/communication/WatchdogClient.cpp
     src/communication/HeadIMU.cpp
@@ -107,6 +109,25 @@ add_library(armor_detector SHARED
     src/RP24_YOLO/RP24_YOLO_Wrapper.cpp
     src/pipeline/AutoAimPipeline.cpp
 )
+
+# ============================================================================
+# TorqueController（力矩控制：MCU+IMU 串口 / 融合 / MPC / 100Hz 下行）
+# ============================================================================
+set(TORQUE_SOURCES
+    src/torque_controller/CRC.cpp
+    src/torque_controller/FusionFilter.cpp
+    src/torque_controller/McuDataPreprocessor.cpp
+    src/torque_controller/mpc_controller.cpp
+    src/torque_controller/yaw_mpc_controller.cpp
+    src/torque_controller/mcu_mpc_controller.cpp
+    src/torque_controller/RobotController.cpp
+)
+add_library(torque_controller STATIC ${TORQUE_SOURCES})
+target_include_directories(torque_controller PUBLIC
+    ${PROJECT_SOURCE_DIR}/include/torque_controller
+    ${CERES_INCLUDE_DIRS}
+)
+target_link_libraries(torque_controller PUBLIC udev ${CERES_LIBRARIES} Eigen3::Eigen)
 #add_library(crc_lib SHARED
 #    src/nodes/CRC.cpp
 #)
@@ -137,6 +158,7 @@ target_link_libraries(armor_detector
     Sophus::Sophus
     fmt::fmt
     udev
+    torque_controller
 )
 
 # 为装甲板检测节点添加依赖

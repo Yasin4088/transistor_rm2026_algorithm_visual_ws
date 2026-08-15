@@ -154,3 +154,24 @@ MIN_TRACKING_COUNT : 2     # 最小连续跟踪次数           // 2
 IS_NEAR_MAX_DIST_RATIO : 1.5     # 50.0
 armor_tracker_fit_step : 5
 armor_tracker_predict_step : 5
+
+# ==================== TorqueController 力矩控制（下行） ====================
+# 启用后由 TorqueController 接管 MCU + IMU 串口（IMU 产品名 AutoAim_IMU_Com），
+# 自瞄只做目标解算，下行 yaw/pitch/fire 经 RobotController::set 发送（内部融合+MPC+100Hz）。
+# 注意：启用时旧 SerialCommunicationClass 与 HeadIMU 串口必须停用，否则端口冲突。
+USE_TORQUE_CONTROLLER : true   # true=TorqueController下行；false=旧串口 sendData
+
+# ---- MPC 与辨识参数（params/1/Identified_parameters.txt；tau_d 通常置 0）----
+torque_dt_control : 0.01       # 控制周期 s
+torque_mpc_N : 20              # MPC 预测步数（yaw 延迟 = dt_control × N = 0.2s）
+torque_J : 0.016541            # 转动惯量
+torque_tau_c : 0.097297        # 时间常数
+torque_b : 0.0321              # 阻尼
+torque_tau_d : 0.0             # 传动延迟（通常置 0）
+torque_max_torque : 1.0        # N·m 上限
+torque_max_torque_rate : 40.0  # N·m/s 变化率上限
+torque_Q : 5.0                 # MPC 位置代价
+torque_R : 0.01                # MPC 输入代价
+torque_Rd : 0.1                # MPC 输入变化率代价
+torque_max_iter : 30           # MPC 迭代上限
+torque_poll_hz : 500           # 状态轮询频率（供自瞄读取 MCU 状态）

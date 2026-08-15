@@ -33,6 +33,7 @@
 #include "camera/Camera.h"
 #include "communication/Com.h"
 #include "communication/HeadIMU.h"
+#include "communication/TorqueBridge.h"
 #include "communication/WatchdogClient.h"
 #include "other_input/ImagesInput.h"
 #include "other_input/VideoInput.h"
@@ -200,23 +201,44 @@ public:
         init_serial_infos.push_time = node_start_time;
         serial_infos_delay_.push(init_serial_infos);
 
-        // 串口通信器初始化
-        serial_communication_ = std::make_shared<SerialCommunicationClass>(this, std::bind(&ArmorDetectNode::serialDataCallback, this, std::placeholders::_1));
+        // 串口通信器初始化：TorqueController 模式接管 MCU+IMU 串口，旧串口停用
+        use_torque_controller_ = (*config_file_ptr)["USE_TORQUE_CONTROLLER"]
+            ? (*config_file_ptr)["USE_TORQUE_CONTROLLER"].as<bool>() : false;
+        if (use_torque_controller_) {
+            torque_bridge_ = std::make_shared<TorqueBridge>(
+                (*config_file_ptr)["torque_dt_control"].as<double>(),
+                (*config_file_ptr)["torque_mpc_N"].as<int>(),
+                (*config_file_ptr)["torque_J"].as<double>(),
+                (*config_file_ptr)["torque_tau_c"].as<double>(),
+                (*config_file_ptr)["torque_b"].as<double>(),
+                (*config_file_ptr)["torque_tau_d"].as<double>(),
+                (*config_file_ptr)["torque_max_torque"].as<double>(),
+                (*config_file_ptr)["torque_max_torque_rate"].as<double>(),
+                (*config_file_ptr)["torque_Q"].as<double>(),
+                (*config_file_ptr)["torque_R"].as<double>(),
+                (*config_file_ptr)["torque_Rd"].as<double>(),
+                (*config_file_ptr)["torque_max_iter"].as<int>(),
+                std::bind(&ArmorDetectNode::torqueStateCallback, this, std::placeholders::_1),
+                (*config_file_ptr)["torque_poll_hz"].as<int>());
+            headIMUInfos.use_head_imu = false;   // IMU 设备已被 TorqueController 占用
+            torque_bridge_->setCommand(false, false, 0.0, 0.0, false);
+        } else {
+            serial_communication_ = std::make_shared<SerialCommunicationClass>(this, std::bind(&ArmorDetectNode::serialDataCallback, this, std::placeholders::_1));
+            com_timer_thread_ = std::thread(std::bind(&SerialCommunicationClass::timerThread, serial_communication_));
 
-        com_timer_thread_ = std::thread(std::bind(&SerialCommunicationClass::timerThread, serial_communication_));
+            headIMUInfos.headIMU_communication_ = std::make_shared<HeadIMUSerialCommunicationClass>(std::bind(&ArmorDetectNode::headIMUSerialDataCallback, this, std::placeholders::_1));
+            headIMUInfos.headIMU_timer_thread_ = std::thread(std::bind(&HeadIMUSerialCommunicationClass::timerThread, headIMUInfos.headIMU_communication_));
 
-        headIMUInfos.headIMU_communication_ = std::make_shared<HeadIMUSerialCommunicationClass>(std::bind(&ArmorDetectNode::headIMUSerialDataCallback, this, std::placeholders::_1));
-        headIMUInfos.headIMU_timer_thread_ = std::thread(std::bind(&HeadIMUSerialCommunicationClass::timerThread, headIMUInfos.headIMU_communication_));
-
-        // 串口通信下位机初始化
-        serial_communication_->sendData(0, 0, false);
+            // 串口通信下位机初始化
+            serial_communication_->sendData(0, 0, false);
+        }
 
         watchdog_client = std::make_shared<WatchdogClient>();
         watchdog_client->init();
         watchdog_client->feed();
         last_feed_dog_time = std::chrono::steady_clock::now();
 
-        if (debug_code_enabled_) {
+        if (debug_code_enabled_ && !use_torque_controller_) {
             debug_code();
         }
 
@@ -230,8 +252,12 @@ public:
         // 退出主循环与视频取流线程
         g_bExit = true;
         // 停止两个串口通信线程（running = false），用 stop() 避免双重析构
-        serial_communication_->stop();
-        headIMUInfos.headIMU_communication_->stop();
+        if (use_torque_controller_) {
+            if (torque_bridge_) torque_bridge_->stop();
+        } else {
+            serial_communication_->stop();
+            headIMUInfos.headIMU_communication_->stop();
+        }
         // join 所有 std::thread 成员，避免析构时 terminate
         if (com_timer_thread_.joinable()) com_timer_thread_.join();
         if (headIMUInfos.headIMU_timer_thread_.joinable()) headIMUInfos.headIMU_timer_thread_.join();
@@ -309,6 +335,8 @@ private:
 
     // 外设、可视化与流水线
     std::shared_ptr<SerialCommunicationClass> serial_communication_;
+    bool use_torque_controller_ = false;             // USE_TORQUE_CONTROLLER
+    std::shared_ptr<TorqueBridge> torque_bridge_;    // TorqueController 桥接（下行+状态）
     std::shared_ptr<WatchdogClient> watchdog_client;
     std::shared_ptr<PerformanceMonitor> performance_monitor_;
     std::chrono::steady_clock::time_point last_feed_dog_time;
@@ -556,6 +584,48 @@ private:
         }
     }
 
+    // TorqueController 状态回调（轮询线程调用）：MCU 状态已多圈连续，直接进延迟队列
+    void torqueStateCallback(const TorqueStateSnapshot& snap) {
+        if (!snap.valid) return;
+
+        // 与旧串口行为对齐：FIX_ENEMY_COLOR / FIX_BULLET_VELOCITY 覆盖
+        uint8_t color = snap.color;
+        if (fix_enemy_color_ == 0 || fix_enemy_color_ == 1) {
+            color = fix_enemy_color_;
+        }
+        float bullet_velocity = snap.bullet_velocity;
+        if (fix_bullet_velocity_ >= 0.0f) {
+            bullet_velocity = fix_bullet_velocity_;
+        }
+
+        bullet_velocity_ = bullet_velocity;
+        headIMUInfos.mcu_pitch = snap.pitch;
+        headIMUInfos.mcu_yaw = snap.total_yaw;
+        headIMUInfos.mcu_yaw_online = true;
+        headIMUInfos.last_mcu_yaw_update_time = std::chrono::steady_clock::now();
+
+        enemy_color_ = (color == 0) ? "RED" : "BLUE";
+        if (enemy_color_ == "RED") {
+            params_.enemy_color = Params::RED;
+        } else if (enemy_color_ == "BLUE") {
+            params_.enemy_color = Params::BLUE;
+        }
+
+        // yaw_angle 已是多圈连续角（无需圈数累加）
+        total_yaw_rad_mcu_ = snap.total_yaw;
+        last_pitch_rad_mcu_ = snap.pitch;
+        last_yaw_rad_mcu_ = snap.total_yaw;
+
+        std::chrono::steady_clock::time_point current_time = std::chrono::steady_clock::now();
+        DelayInfos now_serial_infos;
+        now_serial_infos.last_pitch_rad_ = snap.pitch;
+        now_serial_infos.last_yaw_rad_ = snap.total_yaw;
+        now_serial_infos.total_yaw_rad_ = snap.total_yaw;
+        now_serial_infos.last_roll_rad_ = snap.chassis_roll;
+        now_serial_infos.push_time = current_time;
+        serial_infos_delay_.push(now_serial_infos);
+    }
+
     // 图像投喂与结果处理
     void initVisualizerPublishers() {
         if (!visualizer_config_.enable || !visualizer_config_.publish_topics) {
@@ -781,7 +851,16 @@ private:
         }
 
         headIMUInfos.last_mcu_command_yaw = result.valid_data.mcu_command_yaw;
-        if (result.valid_data.should_send_reset) {
+        if (use_torque_controller_) {
+            // 下行走 TorqueController（内部融合 + MPC + 100Hz 发送）
+            // reset 语义映射为 auto_aim_enable=false（停止自瞄目标）
+            torque_bridge_->setCommand(
+                !result.valid_data.should_send_reset,   // auto_aim_enable
+                false,                                   // yaw_torque_only_mode
+                result.valid_data.mcu_command_yaw,
+                result.valid_data.mcu_command_pitch,
+                result.valid_data.predictor_result.fire_flag);
+        } else if (result.valid_data.should_send_reset) {
             serial_communication_->sendData(0.0, 0.0, false);
         } else {
             serial_communication_->sendData(
