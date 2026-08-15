@@ -89,7 +89,6 @@ add_library(armor_detector SHARED
     # src/communication/SharedMemoryYOLOPose.cpp
     src/communication/Com.cpp
     src/communication/TorqueBridge.cpp
-    src/communication/CRC.cpp
     src/communication/WatchdogClient.cpp
     src/communication/HeadIMU.cpp
     src/utils/FrameRateCounter.cpp
@@ -123,6 +122,7 @@ set(TORQUE_SOURCES
     src/torque_controller/RobotController.cpp
 )
 add_library(torque_controller STATIC ${TORQUE_SOURCES})
+set_target_properties(torque_controller PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(torque_controller PUBLIC
     ${PROJECT_SOURCE_DIR}/include/torque_controller
     ${CERES_INCLUDE_DIRS}
