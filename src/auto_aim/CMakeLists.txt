@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.5)
 project(auto_aim)
 
+# 防御：清除环境变量 CXXFLAGS / CMake 缓存可能带入的 -flto。
+# 原因：LTO 目标文件配合 Ubuntu 默认 --as-needed 链接时，链接器会把
+# rclcpp/OpenCV/yaml-cpp/g2o 等共享库从最终链接中丢弃，表现为大量
+# undefined reference（即使 CMakeLists 里已删除 -flto，环境变量仍会带入）。
+string(REPLACE "-flto=auto" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REPLACE "-flto" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
 # 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -181,6 +188,10 @@ target_link_libraries(armor_detect_node
     TBB::tbb
     openvino::runtime
 )
+
+# 强制链接器保留所有显式链接的库，防止 --as-needed 把它们丢弃
+target_link_options(armor_detector PRIVATE -Wl,--no-as-needed)
+target_link_options(armor_detect_node PRIVATE -Wl,--no-as-needed)
 
 # 为通信节点添加依赖
 #target_link_libraries(com_node
