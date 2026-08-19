@@ -1,5 +1,7 @@
 #include "predictor/PredictorMain.h"
 
+#include <algorithm>
+
 void PredictorMain::update_serial_info(float bullet_velocity, float last_pitch_rad_delayed, float last_yaw_rad_delayed, float total_yaw_rad_delayed) {
     last_pitch_rad_delayed_ = last_pitch_rad_delayed;
     last_yaw_rad_delayed_ = last_yaw_rad_delayed;
@@ -72,12 +74,13 @@ PredictorResult PredictorMain::step(std::vector<ArmorResult>& classifyResults, c
 
     if (auto_aim_switch) { // 仅在电控自瞄开关打开时进行积分
         if (chosen_result.integrating) {
-            pitch_integration += std::min(std::max(chosen_result.command_delta_pitch,
-                                    -command_picth_integration_max_speed_degree * M_PI / 180.0),
-                                    command_picth_integration_max_speed_degree * M_PI / 180.0) * command_picth_integration_speed;
-            yaw_integration += std::min(std::max(chosen_result.command_delta_yaw,
-                                    -command_yaw_integration_max_speed_degree * M_PI / 180.0),
-                                    command_yaw_integration_max_speed_degree * M_PI / 180.0) * command_yaw_integration_speed;
+            // 限幅值统一转成 float，并把“度”换算成弧度（command_delta_* 的单位是弧度）
+            const float pitch_limit = static_cast<float>(
+                command_picth_integration_max_speed_degree * M_PI / 180.0);
+            const float yaw_limit = static_cast<float>(
+                command_yaw_integration_max_speed_degree * M_PI / 180.0);
+            pitch_integration += std::clamp(chosen_result.command_delta_pitch, -pitch_limit, pitch_limit) * command_picth_integration_speed;
+            yaw_integration += std::clamp(chosen_result.command_delta_yaw, -yaw_limit, yaw_limit) * command_yaw_integration_speed;
         }
         if (pitch_integration > pitch_integration_max_degree * M_PI / 180.0) {
             pitch_integration = pitch_integration_max_degree * M_PI / 180.0;

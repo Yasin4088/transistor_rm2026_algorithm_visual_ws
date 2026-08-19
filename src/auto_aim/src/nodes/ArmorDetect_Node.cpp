@@ -785,6 +785,7 @@ private:
             ground_stable_point.x, ground_stable_point.y);
 
         const auto performance_start_time = std::chrono::steady_clock::now();
+        const auto dbg_wait_t0 = std::chrono::steady_clock::now();
         cv::Mat frame;
 
         bool should_sync_camera_fps = sync_camera_fps_ || use_video_ || use_images_;
@@ -792,6 +793,13 @@ private:
             while (image_used && !g_bExit) {
                 usleep(1000);
             }
+        }
+        static int dbg_frame_cnt = 0;
+        if (++dbg_frame_cnt % 90 == 0) {
+            std::cout << "[DBG] sync_wait="
+                      << std::chrono::duration<double, std::milli>(
+                             std::chrono::steady_clock::now() - dbg_wait_t0).count()
+                      << " ms" << std::endl;
         }
         pthread_mutex_lock(&g_mutex);
         if (!g_image.empty()) {

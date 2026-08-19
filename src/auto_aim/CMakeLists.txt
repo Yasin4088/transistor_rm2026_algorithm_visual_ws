@@ -158,6 +158,7 @@ target_link_libraries(armor_detector
     cxsparse
     Sophus::Sophus
     fmt::fmt
+    openvino::runtime
     udev
     torque_controller
 )

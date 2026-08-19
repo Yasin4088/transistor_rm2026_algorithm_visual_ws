@@ -174,6 +174,12 @@ void AutoAimPipeline::Stage1::runAsync()
 
         if (got_input) {
             // 提交到 YOLO 异步流水线，不等待结果
+            // [DBG] 数据初始化 -> stage1 提交 的等待时间（等帧+输入队列+调度）
+            if (d->initial.performance_profile) {
+                d->initial.performance_profile->stages["stage0_pre_submit_wait"] +=
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - d->initial.performance_start_time).count();
+            }
             int detect_color_int = (d->initial.enemy_color == "BLUE") ? 0
                                  : ((d->initial.enemy_color == "RED") ? 1 : -1);
             InFlight pf;
