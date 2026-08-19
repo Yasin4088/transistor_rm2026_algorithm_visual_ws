@@ -234,13 +234,17 @@ void RotationMotionModel::update(ObservedData& observedData) {
         }
         std::cout << "RMM Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump! Yaw jump!" << std::endl;
     }
-
+/*跳变检测（第 222 行）。
+isYawJumpForRMM 用 EKF 的 yaw/vyaw 预测本帧该看到的角度，
+如果实测 yaw 差出 ±45°~±135°，就认为"切到另一块板了"：
+swap r_now/r_another、center_z/z_another，
+翻转调试标志，然后打一长串 Yaw jump! 日志*/
     observedDataHistory.push_back(observedData);
     if (observedDataHistory.size() > max_history) {
         observedDataHistory = std::vector<ObservedData>(
             observedDataHistory.end() - max_history, observedDataHistory.end());
     }
-    last_observed_data = observedData;
+    last_observed_data = observedData;//。压入观测，超过 90 条就截断
 
     int yaw_jump_count = 0;
     for (size_t i = 0; i < observedDataHistory.size(); ++i) {
@@ -278,7 +282,11 @@ void RotationMotionModel::update(ObservedData& observedData) {
                         center_x, center_y, r_now, observedData.dt);
     last_update_time_ = observedData.t;
     rotation_direction = angle_ekf_->getVyaw() >= 0 ? 1.0 : -1.0;
-}
+}/*全量重拟合（第 254–271 行）。reset 后从头扫历史，对每条数据：
+time_offset = data.t − current_time（负值）；
+time_weight = 1.0——注意那个指数时间衰减被注释掉了，遗忘完全靠 RLS 的 lambda_；
+每遇到一条 yaw_jump 记录就翻转一次 this_yaw_jump，用奇偶决定这条数据属于"板 A（r_now/z）"还是"板 B（r_another/z_another）"；
+跳变帧的权重压到 0.2，并且通过 delta_r、delta_z 把测量目标改成另一块板的 r/z——这就是"换板后两块板的半径、z 可以不同"的实现。*/
 
 void RotationMotionModel::emptyUpdate(double update_time) {
     PredictResult pred_data_to_update = predict(update_time - last_update_time_);
@@ -291,10 +299,10 @@ void RotationMotionModel::emptyUpdate(double update_time) {
     });
     update(update_data);
     update_frames_count -= 1;
-}
+}//没有外部观测时模型拿自己的预测训练自己，漂移只会自我强化、没有任何东西纠正
 
 PredictResult RotationMotionModel::predict(double predictTime) {
-    PredictResult result;
+    PredictResult result;//预测未来 predictTime 后的状态：
     
     // 使用原始方法预测平移状态
     result.center_x = center_x + predictTime * center_vx;
@@ -330,12 +338,12 @@ PredictResult RotationMotionModel::predict(double predictTime) {
             z_using,
             r_using,
             armor_yaw
-        }));
+        }));//生成 n_armors 个预测板（普通车 4 个、前哨站 3 个）；
     }
 
     return result;
 }
-
+//把成员变量打包成 RotationMotionState 给外部读
 RotationMotionState RotationMotionModel::getState() {
     RotationMotionState state;
     state.center_vx = center_vx;
@@ -389,3 +397,39 @@ double RotationMotionModel::getTheoreticYawFacingArmor(double armor_x, double ar
     }
     return std::asin(right_shift / r_now);
 }
+/*你的理解基本对，我先帮你把链路确认一下，再回答两个问题。
+
+## 数据流
+
+PnP 解出装甲板 → 转成静止坐标系（rest frame）的坐标 → 打包成 `ObservedData`（x, y, z, yaw, 时间）→ 喂给 RMM：
+
+- 这帧检测到板 → `update()`：拿真实观测更新内部模型；
+- 这帧没检测到 → `emptyUpdate()`：拿自己的预测顶替观测，让模型继续"活着"；
+- 每次要射击前 → `predict(飞行时间)`：用更新完的模型算出未来时刻的板位置，给云台。
+
+一个小修正：`predict` 算的不是"下一帧"的位置，而是"**子弹飞到目标需要的那段时间之后**"的位置（弹道时间 + 额外延迟），这才是云台要提前瞄的点。
+
+## 你手拿一块板的情况
+
+对，"更新不出完整的新模型"——更准确的说法是：**它能更新出"一个"模型，但那个模型一定是错的**。
+
+因为它的模型结构是写死的：
+
+- 永远假设 4 块板、间隔 90°（预测永远输出 4 个点，3 个是幻影）；
+- yaw 被解释成"板绕中心的方位角"，不是"板的朝向"；
+- 中心、半径、角速度都会被拟合出来，但对一块静止板来说，这些拟合值只是"为了解释噪声硬凑出来的"。
+
+它不是拒绝更新，而是没有能力表达"这是一块静止的板"这个事实，所以它会把 yaw 噪声、手的晃动强行解释成旋转和圆周运动，然后输出一个看起来自洽、实际全错的模型。这也是为什么前面建议：测手拿板就用直瞄（`None`），别让 RMM 接手。
+
+## EKF 是啥
+
+**EKF = 扩展卡尔曼滤波器（Extended Kalman Filter）**。先理解普通卡尔曼滤波：它要解决的是"测量有噪声，怎么估计真实状态"。
+
+比如这里，EKF 要估计两个东西：板转到哪个角度（yaw）、转多快（vyaw）。每帧做两件事：
+
+1. **预测**：按"匀速转动"的模型往前走一步（yaw += vyaw·dt）；
+2. **更新**：用带噪声的实测 yaw 和板位置修正估计，同时根据信任程度（噪声方差 R、过程噪声 Q）决定信测量多少。
+
+"扩展"的意思是：标准的卡尔曼滤波要求模型是线性的，但这里"yaw 决定板的位置"是 sin/cos 这种非线性关系。EKF 的做法是**在当前估计处做一阶线性化**（求导，也就是代码里的 `jacobianF`/`jacobianH`），然后套用标准卡尔曼公式。
+
+在这份代码里，`AngleEKF` 就是干这个的：它决定"现在转到哪、转多快"。问题也在这——它默认匀速转动，没有任何"vyaw 应该趋向 0"的约束，所以静止板的噪声会被它解释成一个缓慢的角速度，越滚越乱。*/

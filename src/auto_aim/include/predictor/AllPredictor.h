@@ -17,6 +17,7 @@
 #include "visualizer/DataVisualizer.h"
 #include "utils/SimpleDataFilter.h"
 #include "predictor/RotationMotionModel.h"
+#include "predictor/DirectMotionModel.h"
 #include "predictor/PredictorSwitcher.h"
 
 struct PredictorResult {
@@ -128,6 +129,7 @@ private:
     std::shared_ptr<Oscilloscope> oscilloscope_common_;
 
     std::shared_ptr<RotationMotionModel> rotation_motion_model_;
+    std::unique_ptr<DirectMotionModel> direct_motion_model_;
 
     float bullet_velocity_;
     float last_pitch_rad_delayed_ = 0;

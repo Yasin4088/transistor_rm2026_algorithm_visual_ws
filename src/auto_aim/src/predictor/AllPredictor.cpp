@@ -6,6 +6,7 @@ void AllPredictor::update_serial_info(float bullet_velocity, float last_pitch_ra
     last_yaw_rad_delayed_ = last_yaw_rad_delayed;
     total_yaw_rad_delayed_ = total_yaw_rad_delayed;
 }
+//把电控那边传过来的弹速、延迟后的 pitch/yaw、累计 yaw 存进成员变量，供本帧使用。由 PredictorMain::update_serial_info 每帧在 step 之前广播给所有类别的 AllPredictor。
 
 PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv::Mat& frame, PredictorType::PredictorType control_predictor_type)
 {
@@ -17,13 +18,13 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
     cv::Point3f predicted_aim_pos;
     bool fire_flag = false;
     std::vector<float> cam_position = rest_frame_ -> getCamPosition();
-    result.integrating = true;
+    result.integrating = true;//初始化 total_delay（取上一帧的值兜
 
 
     if (armor_class != ArmorType::Base) {
         // using_predictor_type = predictor_switcher_ -> step();
         if(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - latest_predicting_start_time).count()
-            < pre_predict_time) {
+            < pre_predict_time) {//看到目标后的前 pre_predict_time（2000 ms）直接用 None（直瞄当前装甲板），
 
             using_predictor_type = PredictorType::None;
         } else {
@@ -43,7 +44,7 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
                 }
                 return a.confidence < b.confidence;
             }
-        );
+        );//用 max_element 选最佳装甲板，规则是「正在跟踪的优先，否则比置信度」。
         if (it != classifyResults.end()) {
             // 只读引用，避免按值拷贝 ArmorResult（内含多个 vector/Mat）
             const ArmorResult& chosen_armor = *it;
@@ -59,7 +60,7 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
             // 查看z轴距离轴数据
             oscilloscope_common_ -> addDataPoint(solve_armor_result.position.z / 10000, 0);
 
-            // 将pnp结果转换至静止坐标系以稳定预测
+            // 将pnp结果转换至静止坐标系以稳定预测(把 PnP 解出的相机系坐标和法向量欧拉角转到静止坐标系（RestFrame），这样目标位置不随云台转动而抖动。)
             cv::Point3f rest_frame_pos = rest_frame_ -> pnpToWorldP3f(solve_armor_result.position);
             // std::vector<float> rest_frame_euler_angles = {
             //     static_cast<float>(solve_armor_result.ba_global_ypr[0]),
@@ -89,10 +90,10 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
                 result.command_delta_yaw = 0.0;
                 predicted_armor_pos = last_rest_frame_pos;
                 predicted_aim_pos = last_rest_frame_pos;
-            }
+            }//如果这块板 is_tracked_now == false（没有跟踪上），就把预测位置钉在上一帧的位置 last_rest_frame_pos，delta 输出 0。
         }
     } else {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - last_com_time).count() >= reset_predictor_time) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - last_com_time).count() >= reset_predictor_time) {//若该类别超过 reset_predictor_time（1000 ms）没检测到目标，就重置两个运动模型、把 is_reset 置 true，返回 reset 结果（云台回到最后已知位置，不开火）。
             if (rotation_motion_model_) {
                 RotationMotionState RMMstate = rotation_motion_model_ -> getState();
                 if (RMMstate.update_frames > 90) init_r = (RMMstate.r_now, RMMstate.r_another) / 2.0;
@@ -100,6 +101,7 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
                 if (!(init_r <= 400.0)) init_r = 400.0;
                 rotation_motion_model_.reset();
             }
+            direct_motion_model_.reset();
             is_reset = true;
             last_pixel_horizontal_center_distance = 1e10;
             has_valid_ballistic = false;
@@ -198,6 +200,37 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
                 rotation_motion_model_ -> emptyUpdate(RMM_update_time);
             }
         }
+
+
+        // ========================== DirectMotionModel ===========================
+        double DM_update_time = RMM_update_time;
+        bool DM_updated_flag = false;
+        if (!classifyResults.empty()) {
+            for (auto& chosen_armor : classifyResults) {
+                AimResult solve_armor_result = chosen_armor.solve_armor_result;
+                cv::Point3f rest_frame_pos = rest_frame_ -> pnpToWorldP3f(solve_armor_result.position);
+                std::vector<float> rest_frame_euler_angles = rest_frame_ -> getWorldEulerAnglesFromCam(
+                    solve_armor_result.normal_euler_angles[0], solve_armor_result.normal_euler_angles[1], solve_armor_result.normal_euler_angles[2]);
+                ObservedData DM_update_data({
+                    rest_frame_pos.x, rest_frame_pos.y, rest_frame_pos.z, rest_frame_euler_angles[0],
+                    DM_update_time
+                });
+                if (!direct_motion_model_) {
+                    direct_motion_model_ = std::make_unique<DirectMotionModel>(DM_update_data);
+                } else {
+                    if (chosen_armor.is_tracked_now) {
+                        direct_motion_model_ -> update(DM_update_data);
+                        DM_updated_flag = true;
+                    }
+                }
+            }
+        }
+        if (!DM_updated_flag) {
+            if (direct_motion_model_) {
+                direct_motion_model_ -> emptyUpdate(DM_update_time);
+            }
+        }
+        // ========================== DirectMotionModel END ===========================
 
 
 
@@ -390,6 +423,22 @@ PredictorResult AllPredictor::step(std::vector<ArmorResult>& classifyResults, cv
             result.info_images.RMM_visualize_frame = RMM_visualize_frame;
         }
         // ========================== RotationMotionModsel =========================== END
+
+        // ========================== DirectMotionModel aim ===========================
+        if (using_predictor_type == PredictorType::DirectModel && direct_motion_model_) {
+            PredictResult DM_pred_aim_data = direct_motion_model_ -> predict(total_delay);
+            if (!DM_pred_aim_data.armors.empty()) {
+                const SimpleArmor& DM_armor = DM_pred_aim_data.armors[0];
+                predicted_armor_pos = {
+                    static_cast<float>(DM_armor.x),
+                    static_cast<float>(DM_armor.y),
+                    static_cast<float>(DM_armor.z)
+                };
+                predicted_aim_pos = predicted_armor_pos;
+                fire_flag = true;
+            }
+        }
+        // ========================== DirectMotionModel aim END ===========================
     }
 
     // 统一转换回pnp相机坐标系    

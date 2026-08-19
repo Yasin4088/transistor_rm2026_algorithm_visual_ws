@@ -71,6 +71,7 @@ thread_pool_size : 0 # 全局线程池线程数，0=自动（逻辑核数）
 
 pre_predict_time_not_aim : 500.0 # ms 在看到目标的这段时间内不启动自瞄，防止因电控云台角度信息延迟而震荡
 pre_predict_time : 2000.0 # ms 在看到目标的这段时间内自瞄直接瞄准当前装甲板位置，不使用预测器预测的位置，待有足够观测值后再使用预测值
+predictor_type : "DirectModel" # 预测器类型："None" 直瞄（不做预测）/ "RMM" 旋转运动模型（四板云台）/ "DirectModel" 直接运动模型（手持单板测试，卡尔曼平滑位置）
 reset_predictor_time : 1000.0 # ms 超过这段时间未观测到某一类装甲板，将停止这一类装甲板的预测并重置预测器
 
 # 控制PID参数

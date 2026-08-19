@@ -843,12 +843,12 @@ private:
             initial.to_mcu_delta_yaw = headIMUInfos.to_mcu_delta_yaw;
             initial.to_mcu_delta_pitch = headIMUInfos.to_mcu_delta_pitch;
             auto_aim_pipeline_->addFrame(std::move(initial));
-        }
+        }//节点给流水线喂帧、取结果：每帧调用 auto_aim_pipeline_->addFrame(...) 把图像+电控数据推进去（）
 
         AutoAimPipeline::ProcessResult result = auto_aim_pipeline_->tryPopResult(now);
         if (!result.valid) {
             return;
-        }
+        }//把处理完的命令拿出来发给电控
 
         headIMUInfos.last_mcu_command_yaw = result.valid_data.mcu_command_yaw;
         if (use_torque_controller_) {
