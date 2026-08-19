@@ -36,6 +36,24 @@ find_package(g2o REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(fmt REQUIRED)
 
+# OpenVINO：优先从 Python pip 安装位置自动定位 CMake 配置目录。
+# pip 版 openvino 不会进入 CMAKE_PREFIX_PATH，全新构建目录（无 CMakeCache）
+# 下 find_package(OpenVINO) 会失败；这里自动探测 openvino 包内的 cmake/ 目录，
+# 用户也可用 -DOpenVINO_DIR=xxx 显式覆盖。
+if(NOT DEFINED OpenVINO_DIR)
+    foreach(_py IN ITEMS python3 python)
+        execute_process(
+            COMMAND ${_py} -c "import openvino, os; print(os.path.join(os.path.dirname(openvino.__file__), 'cmake'))"
+            OUTPUT_VARIABLE _openvino_cmake_dir
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(_openvino_cmake_dir AND EXISTS "${_openvino_cmake_dir}/OpenVINOConfig.cmake")
+            set(OpenVINO_DIR "${_openvino_cmake_dir}" CACHE PATH "OpenVINO CMake config directory (pip install)")
+            break()
+        endif()
+    endforeach()
+endif()
 find_package(OpenVINO REQUIRED)
 find_package(Ceres REQUIRED)
 
