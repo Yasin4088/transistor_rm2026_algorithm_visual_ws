@@ -41,6 +41,7 @@ find_package(fmt REQUIRED)
 # 下 find_package(OpenVINO) 会失败；这里自动探测 openvino 包内的 cmake/ 目录，
 # 用户也可用 -DOpenVINO_DIR=xxx 显式覆盖。
 if(NOT DEFINED OpenVINO_DIR)
+    # 1) 从 python 探测 pip 版 openvino 的 cmake 目录
     foreach(_py IN ITEMS python3 python)
         execute_process(
             COMMAND ${_py} -c "import openvino, os; print(os.path.join(os.path.dirname(openvino.__file__), 'cmake'))"
@@ -53,6 +54,21 @@ if(NOT DEFINED OpenVINO_DIR)
             break()
         endif()
     endforeach()
+    # 2) 兜底：直接扫描 ~/.local/lib/python*/site-packages/openvino/cmake，
+    #    不依赖 python 是否能 import openvino
+    if(NOT DEFINED OpenVINO_DIR)
+        file(GLOB _openvino_pip_cmake_dirs
+            "$ENV{HOME}/.local/lib/python*/site-packages/openvino/cmake")
+        foreach(_d IN LISTS _openvino_pip_cmake_dirs)
+            if(EXISTS "${_d}/OpenVINOConfig.cmake")
+                set(OpenVINO_DIR "${_d}" CACHE PATH "OpenVINO CMake config directory (pip install)")
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+if(DEFINED OpenVINO_DIR)
+    message(STATUS "OpenVINO_DIR: ${OpenVINO_DIR}")
 endif()
 find_package(OpenVINO REQUIRED)
 find_package(Ceres REQUIRED)
