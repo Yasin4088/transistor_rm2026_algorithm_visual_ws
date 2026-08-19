@@ -128,7 +128,10 @@ target_include_directories(torque_controller PUBLIC
     ${PROJECT_SOURCE_DIR}/include/torque_controller
     ${CERES_INCLUDE_DIRS}
 )
-target_link_libraries(torque_controller PUBLIC udev ${CERES_LIBRARIES} Eigen3::Eigen)
+# 用 Ceres::ceres 目标而不是 ${CERES_LIBRARIES}：目标会传递 glog/gflags/SuiteSparse
+# 等传递依赖，否则链接 libarmor_detector.so 时会出现
+# google::base::CheckOpMessageBuilder::NewString 等 undefined reference
+target_link_libraries(torque_controller PUBLIC udev Ceres::ceres Eigen3::Eigen)
 #add_library(crc_lib SHARED
 #    src/nodes/CRC.cpp
 #)
@@ -196,9 +199,12 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -DNDEBUG -flto -march=native")
+# 不要启用 -flto / -flto=auto：
+# 默认构建类型改为 RelWithDebInfo 后，编译侧 -flto（仅 Release 生效）与链接侧
+# -flto=auto 不一致，配合 Ubuntu 默认 --as-needed 会把共享库（rclcpp/OpenCV/
+# yaml-cpp/g2o 等）从链接中丢弃，导致大量 undefined reference
+set(CMAKE_CXX_FLAGS_RELEASE "-Ofast -DNDEBUG -march=native")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG -Wall -Wextra")
-set(CMAKE_EXE_LINKER_FLAGS "-flto=auto")
 
 # 添加库的路径
 link_directories(/opt/MVS/lib/64)
